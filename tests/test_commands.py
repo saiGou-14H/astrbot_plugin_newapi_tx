@@ -409,7 +409,24 @@ class CommandTests(unittest.IsolatedAsyncioTestCase):
         self.plugin._ensure_qq_group_message_parser()
         self.assertIs(state.parsers["group_message_create"], parser)
 
-    async def test_live_group_message_parser_preserves_member_mentions(self):
+    async def test_defer_new_qq_group_message_parser_until_client_login(self):
+        parser = lambda payload: payload
+        state = SimpleNamespace(parsers={}, parse_group_message_create=parser)
+        client = SimpleNamespace(_connection=None)
+
+        async def bot_login(token):
+            client._connection = SimpleNamespace(state=state)
+
+        client._bot_login = bot_login
+        platform = SimpleNamespace(get_client=lambda: client)
+        self.plugin.context = SimpleNamespace(
+            platform_manager=SimpleNamespace(get_insts=lambda: [platform])
+        )
+        self.plugin._ensure_qq_group_message_parser()
+        self.assertNotIn("group_message_create", state.parsers)
+        await client._bot_login("synthetic-token")
+        self.assertIs(state.parsers["group_message_create"], parser)
+
         from astrbot.core.platform.sources.qqofficial.qqofficial_platform_adapter import (
             PatchedGroupMessage,
         )

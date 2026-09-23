@@ -361,25 +361,54 @@ class NewApiSuitePlugin(Star):
                     binding.get('qq_id', binding.get('openid')), data.get('quota', 0)
                 )
 
+    def _register_qq_group_message_parser_for_client(self, client) -> bool:
+        state = getattr(getattr(client, "_connection", None), "state", None)
+        parsers = getattr(state, "parsers", None)
+        parser = getattr(state, "parse_group_message_create", None)
+        if not isinstance(parsers, dict) or not callable(parser):
+            return False
+        if parsers.get("group_message_create") is not parser:
+            parsers["group_message_create"] = parser
+            logger.info("[NewAPI Suite] QQ GROUP_MESSAGE_CREATE parser registered")
+        return True
+
     def _ensure_qq_group_message_parser(self) -> None:
         """Make newer GROUP_MESSAGE_CREATE events reach AstrBot's live SDK state.
 
-        qq-botpy snapshots its parser methods into ``state.parsers`` when the
-        client is constructed. The QQ adapter adds the patched parser method
-        afterward, so the existing state otherwise drops this newer event.
+        qq-botpy creates its parser table when the client logs in. The QQ
+        adapter adds the patched parser method before login, but the existing
+        state table must be updated after login as well.
         """
         manager = getattr(getattr(self, "context", None), "platform_manager", None)
         get_insts = getattr(manager, "get_insts", None)
         if not callable(get_insts):
             return
         for platform in get_insts() or []:
-            client = getattr(platform, "get_client", lambda: None)()
-            state = getattr(getattr(client, "_connection", None), "state", None)
-            parsers = getattr(state, "parsers", None)
-            parser = getattr(state, "parse_group_message_create", None)
-            if isinstance(parsers, dict) and callable(parser):
-                parsers["group_message_create"] = parser
-                logger.info("[NewAPI Suite] QQ GROUP_MESSAGE_CREATE parser registered")
+            get_client = getattr(platform, "get_client", None)
+            if not callable(get_client):
+                continue
+            client = get_client()
+            if self._register_qq_group_message_parser_for_client(client):
+                continue
+            if getattr(client, "_newapi_group_message_parser_hook", False):
+                continue
+            previous_bot_login = getattr(client, "_bot_login", None)
+            if not callable(previous_bot_login):
+                continue
+
+            async def bot_login(
+                token,
+                previous_handler=previous_bot_login,
+                qq_client=client,
+            ):
+                await previous_handler(token)
+                self._register_qq_group_message_parser_for_client(qq_client)
+
+            client._bot_login = bot_login
+            client._newapi_group_message_parser_hook = True
+            logger.info(
+                "[NewAPI Suite] QQ GROUP_MESSAGE_CREATE parser deferred until login"
+            )
 
     async def initialize(self):
         self._ensure_qq_group_message_parser()
