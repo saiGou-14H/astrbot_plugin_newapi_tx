@@ -1,4 +1,6 @@
 import os
+import math
+from .config_utils import config_get
 import json
 import asyncio
 import time
@@ -62,7 +64,7 @@ class NewApiCore:
         load_dotenv()
 
         # API 配置：插件配置 > .env
-        api_conf = self.config.get('api_settings', {})
+        api_conf = config_get(self.config, 'api_settings', {})
         self.api_base_url = self._resolve(api_conf.get('api_base_url'), os.getenv("API_BASE_URL"))
         raw_token = self._resolve(api_conf.get('api_access_token'), os.getenv("API_ACCESS_TOKEN", ""))
 
@@ -78,8 +80,8 @@ class NewApiCore:
             return False
 
         # 数据库配置：插件配置 > .env
-        db_conf = self.config.get('database_settings', {})
-        sqlite_conf = self.config.get('sqlite_settings', {})
+        db_conf = config_get(self.config, 'database_settings', {})
+        sqlite_conf = config_get(self.config, 'sqlite_settings', {})
         # 兼容旧版：旧配置将开关存在 database_settings 下，新版统一读取 sqlite_settings
         use_sqlite = bool(sqlite_conf.get('use_sqlite_mode', db_conf.get('use_sqlite_mode', False)))
         self.db_mode = "sqlite" if use_sqlite else "mysql"
@@ -504,7 +506,7 @@ class NewApiCore:
             return None
         d = dict(row)
         # 将已知的时间戳字段字符串解析为 datetime 对象，保持与 MySQL 模式一致的接口
-        for col in ("binding_time", "last_check_in_time", "heist_time"):
+        for col in ("binding_time", "last_check_in_time", "heist_time", "last_time"):
             val = d.get(col)
             if isinstance(val, str):
                 try:
@@ -748,8 +750,8 @@ class NewApiCore:
         金额按原始额度整数预拆分，保证各份之和精确等于总额。
         对外仅公布 code（6位随机码）；代码在「过期+7天冷却」后允许被复用。
         """
-        conf = self.config.get('red_packet_settings', {})
-        ratio = self.config.get('binding_settings.quota_display_ratio', 500000) or 1
+        conf = config_get(self.config, 'red_packet_settings', {})
+        ratio = config_get(self.config, 'binding_settings.quota_display_ratio', 500000) or 1
         expire_hours = int(conf.get('expire_hours', 24))
         total_raw = int(round(total_display * ratio))
         # 防护：每份至少 1 原始额度，否则拆分会产生非正数份额
@@ -792,7 +794,7 @@ class NewApiCore:
 
     async def _rp_summary_entries(self, packet_id: int) -> list:
         """汇总某红包的全部领取记录，按金额从多到少排序。"""
-        ratio = self.config.get('binding_settings.quota_display_ratio', 500000) or 1
+        ratio = config_get(self.config, 'binding_settings.quota_display_ratio', 500000) or 1
         rows = await self.execute_query(
             "SELECT COALESCE(grabber_name, '') AS gname, identity, amount_raw "
             "FROM newapi_red_packet_records WHERE packet_id = %s",
@@ -814,10 +816,10 @@ class NewApiCore:
 
         status: SUCCESS / ALREADY / EMPTY / EXPIRED / NOT_FOUND / DISABLED / API_ERROR
         """
-        conf = self.config.get('red_packet_settings', {})
+        conf = config_get(self.config, 'red_packet_settings', {})
         if not conf.get('enabled', True):
             return "DISABLED", {}
-        ratio = self.config.get('binding_settings.quota_display_ratio', 500000) or 1
+        ratio = config_get(self.config, 'binding_settings.quota_display_ratio', 500000) or 1
 
         # 先解析真实主键，再按主键加锁，保证同一红包并发串行
         p0 = await self.resolve_rp_packet(packet_ref)
@@ -974,13 +976,18 @@ class NewApiCore:
             "INSERT INTO newapi_openid_bindings (openid, website_user_id) VALUES (%s, %s)",
             (openid, website_user_id)
         )
-        if result is None:
+        if result != 1:
             raise RuntimeError("OpenID binding database insert failed")
         return result
 
     async def delete_openid_binding(self, *, openid: Optional[str] = None,
                                     website_user_id: Optional[int] = None) -> int:
         """删除 OpenID 绑定记录。"""
+        if openid and website_user_id:
+            return await self.execute_query(
+                "DELETE FROM newapi_openid_bindings WHERE openid = %s AND website_user_id = %s",
+                (openid, website_user_id)
+            )
         if openid:
             return await self.execute_query(
                 "DELETE FROM newapi_openid_bindings WHERE openid = %s", (openid,)
@@ -996,10 +1003,14 @@ class NewApiCore:
         
         返回字段统一含 website_user_id，QQ 绑定额外含 qq_id，OpenID 绑定额外含 openid。
         """
-        if isinstance(user_id, int) or (isinstance(user_id, str) and user_id.strip().lstrip('-').isdigit()):
-            return await self.get_user_by_qq(int(user_id))
-        if isinstance(user_id, str) and user_id.strip():
-            return await self.get_user_by_openid(user_id.strip())
+        raw = str(user_id or "").strip()
+        if raw.startswith(("qq:", "openid:")):
+            _, binding = await self.lookup_binding(raw)
+            return binding
+        if len(raw) == 32 or (raw and not raw.isdecimal()):
+            return await self.get_user_by_openid(raw)
+        if raw.isascii() and raw.isdecimal() and int(raw) > 0:
+            return await self.get_user_by_qq(int(raw))
         return None
 
     async def get_api_user_data(self, user_id: int) -> Optional[Dict]:
@@ -1024,7 +1035,7 @@ class NewApiCore:
             logger.warning(f"[NewAPI Utils] HTTP 请求失败 {method} {url}: {e}")
             return None
 
-    async def get_self_by_user_token(self, token: str) -> Optional[Dict]:
+    async def get_self_by_user_token(self, token: str, expected_user_id: int) -> Optional[Dict]:
         """用网站用户的系统访问令牌调用 GET /api/user/self 验证身份。
 
         令牌有效时返回 {"user_id": int, "username": str}；无效/网络失败返回 None。
@@ -1035,11 +1046,14 @@ class NewApiCore:
         if token.lower().startswith("bearer "):
             token = token[7:].strip()
         url = f"{self.api_base_url.rstrip('/')}/api/user/self"
-        data = await self._http_request_json("GET", url, {"Authorization": f"Bearer {token}"})
+        headers = {"Authorization": f"Bearer {token}", "New-Api-User": str(expected_user_id)}
+        data = await self._http_request_json("GET", url, headers)
         if data and data.get("success"):
             user = data.get("data") or {}
             uid = user.get("id")
             try:
+                if int(uid) != int(expected_user_id):
+                    return None
                 return {"user_id": int(uid), "username": user.get("username")}
             except (TypeError, ValueError):
                 return None
@@ -1109,12 +1123,17 @@ class NewApiCore:
             "INSERT INTO newapi_bindings (qq_id, website_user_id) VALUES (%s, %s)",
             (qq_id, website_user_id)
         )
-        if result is None:
+        if result != 1:
             raise RuntimeError("QQ binding database insert failed")
         return result
 
     async def delete_binding(self, *, qq_id: Optional[int] = None,
                               website_user_id: Optional[int] = None) -> int:
+        if qq_id and website_user_id:
+            return await self.execute_query(
+                "DELETE FROM newapi_bindings WHERE qq_id = %s AND website_user_id = %s",
+                (qq_id, website_user_id)
+            )
         if qq_id:
             return await self.execute_query(
                 "DELETE FROM newapi_bindings WHERE qq_id = %s", (qq_id,)
@@ -1164,7 +1183,7 @@ class NewApiCore:
         if not api_user_data:
             logger.warning(f"无法获取网站ID {website_user_id} 的用户数据，跳过用户组恢复操作。")
             return False
-        leave_conf = self.config.get('group_leave_settings', {})
+        leave_conf = config_get(self.config, 'group_leave_settings', {})
         revert_group = leave_conf.get('revert_group_on_leave', 'default')
         if api_user_data.get('group') == revert_group:
             logger.info(f"网站用户 {website_user_id} 已在目标恢复组 {revert_group} 中，无需操作。")
@@ -1186,12 +1205,12 @@ class NewApiCore:
         return update_success
 
     async def perform_check_in(self, qq_id: int, binding: Optional[Dict] = None) -> Tuple[str, Dict[str, Any]]:
-        check_in_conf = self.config.get('check_in_settings', {})
+        check_in_conf = config_get(self.config, 'check_in_settings', {})
         if not check_in_conf.get('enabled', False):
             return "DISABLED", {}
 
         if not binding:
-            binding = await self.get_user_by_qq(qq_id)
+            binding = await self.get_user_by_identity(qq_id)
         if not binding:
             return "NOT_BOUND", {}
 
@@ -1209,7 +1228,7 @@ class NewApiCore:
         max_display_q = check_in_conf.get('max_display_quota', 0)
         diminish_enabled = check_in_conf.get('diminish_enabled', False)
         diminish_threshold = check_in_conf.get('diminish_threshold', 0)
-        ratio = self.config.get('binding_settings.quota_display_ratio', 500000)
+        ratio = config_get(self.config, 'binding_settings.quota_display_ratio', 500000)
 
         time_delta = timedelta(hours=offset_hours)
         local_today = (datetime.utcnow() + time_delta).date()
@@ -1270,45 +1289,80 @@ class NewApiCore:
     async def purge_user_binding(self, website_user_id: int) -> Tuple[bool, Optional[Dict]]:
         binding_info = await self.get_user_by_website_id(website_user_id)
         openid_binding = await self.get_openid_by_website_id(website_user_id)
-        if not binding_info and not openid_binding:
-            logger.warning(f"净化请求失败：未找到网站ID {website_user_id} 的绑定记录。")
+        info = binding_info or openid_binding
+        if info is None:
             return False, None
+        # 纯 OpenID 绑定也可能晋升分组；恢复失败时保留绑定供重试。
+        if not await self.revert_user_group(website_user_id):
+            return False, info
+        queries = [("newapi_bindings", binding_info), ("newapi_openid_bindings", openid_binding)]
         try:
-            if binding_info:
-                logger.info(f"开始净化网站ID {website_user_id} (QQ: {binding_info['qq_id']})...")
-                await self.revert_user_group(website_user_id)
-                await self.delete_binding(website_user_id=website_user_id)
-            if openid_binding:
-                logger.info(f"开始净化网站ID {website_user_id} (OpenID: {openid_binding['openid']})...")
-                await self.delete_openid_binding(website_user_id=website_user_id)
-            logger.info(f"净化成功：已删除网站ID {website_user_id} 的所有绑定记录。")
-            return True, (binding_info or openid_binding)
+            if self.db_mode == "sqlite":
+                if self.db_conn is None:
+                    raise RuntimeError("SQLite connection unavailable")
+                await self.db_conn.execute("BEGIN")
+                try:
+                    for table, expected in queries:
+                        async with self.db_conn.execute(
+                            f"DELETE FROM {table} WHERE website_user_id = ?", (website_user_id,)
+                        ) as cur:
+                            if expected and cur.rowcount != 1:
+                                raise RuntimeError("Binding changed during deletion")
+                    await self.db_conn.commit()
+                except Exception:
+                    await self.db_conn.rollback()
+                    raise
+            else:
+                if self.db_pool is None:
+                    raise RuntimeError("MySQL connection unavailable")
+                async with self.db_pool.acquire() as conn:
+                    await conn.begin()
+                    try:
+                        async with conn.cursor() as cur:
+                            for table, expected in queries:
+                                await cur.execute(f"DELETE FROM {table} WHERE website_user_id = %s", (website_user_id,))
+                                if expected and cur.rowcount != 1:
+                                    raise RuntimeError("Binding changed during deletion")
+                        await conn.commit()
+                    except Exception:
+                        await conn.rollback()
+                        raise
+            return True, info
         except Exception as e:
-            logger.error(f"执行净化网站ID {website_user_id} 的过程中发生未知错误: {e}", exc_info=True)
-            return False, (binding_info or openid_binding)
+            logger.error(f"解绑失败，数据库事务已回滚: {type(e).__name__}")
+            return False, info
 
     async def lookup_binding(self, identifier) -> Tuple[str, Optional[Dict]]:
-        """智能查找绑定：int 按网站ID/QQ号，string 按 OpenID（若为数字字符串则回退到 int 查找）。"""
-        if isinstance(identifier, str):
-            # 字符串：先尝试 OpenID 匹配
-            binding = await self.get_user_by_openid(identifier)
-            if binding:
-                return "OPENID", binding
-            # 纯数字字符串 → 转为 int 走常规查找
-            if identifier.strip().lstrip('-').isdigit():
-                identifier = int(identifier)
-            else:
+        """数字文本优先网站ID（两张表），再查QQ；显式身份不跨命名空间回退。"""
+        raw = str(identifier or "").strip()
+        kind, sep, value = raw.partition(":")
+        if sep and kind in ("qq", "openid", "site"):
+            if kind == "openid":
+                binding = await self.get_user_by_openid(value)
+                return ("OPENID", binding) if binding else ("NOT_FOUND", None)
+            if not value.isascii() or not value.isdecimal() or int(value) <= 0:
                 return "NOT_FOUND", None
+            if kind == "qq":
+                binding = await self.get_user_by_qq(int(value))
+                return ("QQ_ID", binding) if binding else ("NOT_FOUND", None)
+            identifier = int(value)
+        elif isinstance(identifier, str):
+            # 常规数字文本优先网站 ID；32 位 OpenID 保留前导零。
+            if len(raw) == 32 or not raw.isascii() or not raw.isdecimal():
+                binding = await self.get_user_by_openid(raw)
+                return ("OPENID", binding) if binding else ("NOT_FOUND", None)
+            identifier = int(raw)
 
-        # 数字：网站ID 或 QQ号
-        if isinstance(identifier, int):
+        if isinstance(identifier, int) and not isinstance(identifier, bool) and identifier > 0:
             binding = await self.get_user_by_website_id(identifier)
+            if not binding:
+                binding = await self.get_openid_by_website_id(identifier)
             if binding:
                 return "WEBSITE_ID", binding
-            binding = await self.get_user_by_qq(identifier)
-            if binding:
-                return "QQ_ID", binding
-
+            if kind != "site":
+                binding = await self.get_user_by_qq(identifier)
+                if binding:
+                    return "QQ_ID", binding
         return "NOT_FOUND", None
 
     async def adjust_balance_by_identifier(self, identifier: int,
@@ -1320,8 +1374,13 @@ class NewApiCore:
         api_user_data = await self.get_api_user_data(website_user_id)
         if not api_user_data:
             return "API_FETCH_FAILED", {"website_user_id": website_user_id}
-        ratio = self.config.get('binding_settings.quota_display_ratio', 500000)
-        raw_quota_adjustment = int(display_adjustment * ratio)
+        ratio = config_get(self.config, 'binding_settings.quota_display_ratio', 500000)
+        if not math.isfinite(display_adjustment) or not isinstance(ratio, (int, float)) or not math.isfinite(ratio) or ratio <= 0:
+            return "INVALID_AMOUNT", {"website_user_id": website_user_id}
+        raw_amount = display_adjustment * ratio
+        if not math.isfinite(raw_amount) or abs(raw_amount) < 1 or abs(raw_amount) > 2**63 - 1:
+            return "INVALID_AMOUNT", {"website_user_id": website_user_id}
+        raw_quota_adjustment = int(round(raw_amount))
         if raw_quota_adjustment >= 0:
             if not await self.manage_user_quota(website_user_id, "add", raw_quota_adjustment):
                 return "API_UPDATE_FAILED", {"website_user_id": website_user_id}
@@ -1330,7 +1389,7 @@ class NewApiCore:
                 return "API_UPDATE_FAILED", {"website_user_id": website_user_id}
         updated_user = await self.get_api_user_data(website_user_id)
         if not updated_user:
-            return "API_FETCH_FAILED", {"website_user_id": website_user_id}
+            return "APPLIED_BALANCE_UNAVAILABLE", {"website_user_id": website_user_id}
         new_total_raw_quota = updated_user.get("quota", 0)
         new_display_quota = new_total_raw_quota / ratio
         return "SUCCESS", {"website_user_id": website_user_id, "new_display_quota": new_display_quota}
@@ -1375,7 +1434,7 @@ class NewApiCore:
     async def transfer_display_quota(self, from_user_id: int, to_user_id: int,
                                      display_amount: float,
                                      allow_partial: bool = False) -> Tuple[bool, float, int]:
-        ratio = self.config.get('binding_settings.quota_display_ratio', 500000)
+        ratio = config_get(self.config, 'binding_settings.quota_display_ratio', 500000)
         raw_amount = int(display_amount * ratio)
         transfer_success, actual_raw_amount = await self._transfer_quota(
             from_user_id=from_user_id, to_user_id=to_user_id,
