@@ -37,6 +37,10 @@
 
 ## 验证
 
+本次验收：32/32 测试通过（17 核心、11 指令、4 独立 MySQL）；7 个管理员权限装饰器与部署前一致。线上只读验证通过：`13`、`"13"`、`site:13` 及对应 OpenID 均命中同一网站账号；打劫双方解析返回 `VALID`；读取用户与管理员 API 检查成功。没有执行线上额度变更或绑定写入。AstrBot 重启后插件初始化成功、WebUI HTTP 200。
+
+`tests/verify_live_readonly.py` 是显式运行的线上只读验收脚本，不属于默认 unittest 自动测试；收集该子进程输出时只显示 `VERIFY_RESULT=` 行，过滤插件原有详细业务日志。
+
 - `tests/test_core_identity.py`：内存 SQLite 核心逻辑，模拟 HTTP（真实 HTTP 默认阻断）。
 - `tests/test_commands.py`：真实 AstrBot CommandFilter、消息组件、命令处理器；内存数据和模拟额度接口。
 - `tests/test_mysql_identity.py`：仅在 `COMPAT_TEST_MYSQL=1` 时运行，固定连接独立的 `astrbot-newapi-compat-testdb/compat_test` 测试容器，包含故障注入事务回滚。
