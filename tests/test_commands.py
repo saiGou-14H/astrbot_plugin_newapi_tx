@@ -309,5 +309,94 @@ class CommandTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.quota_calls, [])
 
 
+    async def official_event(self, content, mentions):
+        from astrbot.api.platform import MessageType
+        from astrbot.core.platform.sources.qqofficial.qqofficial_platform_adapter import (
+            PatchedGroupMessage, QQOfficialPlatformAdapter,
+        )
+        payload = {
+            "id": "synthetic-message-id", "group_openid": "synthetic-group-id",
+            "author": {"member_openid": "A" * 32},
+            "content": content, "mentions": mentions, "attachments": [],
+            "timestamp": "2026-01-01T00:00:00Z",
+        }
+        raw = PatchedGroupMessage(None, "synthetic-event", payload)
+        abm = await QQOfficialPlatformAdapter._parse_from_qqofficial(
+            raw, MessageType.GROUP_MESSAGE, force_group_mention=True,
+        )
+        event = FakeEvent(abm.message_str, sender=abm.sender.user_id, segments=abm.message)
+        event.message_obj = abm
+        event.get_self_id = lambda: abm.self_id
+        return event
+
+    async def test_real_adapter_raw_mentions_reach_heist(self):
+        await self.seed_openid("A" * 32, 26)
+        await self.seed_openid("B" * 32, 13)
+        event = await self.official_event(" 打劫 ", [{"id": "B" * 32, "username": "目标 成员"}])
+        # Reproduce the real adapter: no member At component, despite raw mentions.
+        self.assertEqual([str(s.qq) for s in event.get_messages() if isinstance(s, At)], ["qq_official"])
+        self.assertEqual(self.plugin._extract_at_targets(event), ["openid:" + "B" * 32])
+        with patch.object(self.plugin.heist_handler, "_determine_heist_outcome", return_value=("SUCCESS", 1.25)), \
+             patch.object(self.core, "transfer_display_quota", new_callable=AsyncMock, return_value=(True, 1.25, 125)) as transfer, \
+             patch.object(self.core, "log_heist_attempt", new_callable=AsyncMock, return_value=1):
+            reply = await self.collect(self.plugin.handle_heist_command, event)
+            self.assertIn("成功", reply)
+            transfer.assert_awaited_once_with(from_user_id=13, to_user_id=26, display_amount=1.25, allow_partial=True)
+        self.assertEqual(self.quota_calls, [])
+
+    async def test_real_adapter_raw_mentions_reach_adjustment(self):
+        await self.seed_openid("B" * 32, 13)
+        event = await self.official_event(" 调整余额 -1.25 ", [{"id": "B" * 32, "username": "目标 成员"}])
+        command_filter = CommandFilter("调整余额", handler_md=SimpleNamespace(handler=NewApiSuitePlugin.handle_adjust_balance))
+        self.assertTrue(command_filter.filter(event, self.config))
+        reply = await self.collect(self.plugin.handle_adjust_balance, event, **event.get_extra("parsed_params"))
+        self.assertIn("操作成功", reply)
+        self.assertEqual(self.quota_calls, [{"id": 13, "action": "add_quota", "mode": "subtract", "value": 125}])
+
+    async def test_real_adapter_raw_mentions_reach_queries(self):
+        await self.seed_openid("B" * 32, 13)
+        event = await self.official_event(" 查余额 ", [{"id": "B" * 32}])
+        reply = await self.collect(self.plugin.handle_query_other_balance, event)
+        self.assertIn("13", reply)
+        event = await self.official_event(" 查询 ", [{"id": "B" * 32}])
+        reply = await self.collect(self.plugin.handle_universal_lookup, event)
+        self.assertIn("OpenID", reply)
+        self.assertIn("13", reply)
+        self.assertEqual(self.quota_calls, [])
+
+    async def test_raw_mentions_exclude_bot_and_deduplicate_components(self):
+        event = await self.official_event(" 打劫 ", [
+            {"id": "F" * 32, "is_you": True},
+            {"id": "B" * 32}, {"id": "B" * 32},
+        ])
+        event.segments.append(At(qq="B" * 32))
+        self.assertEqual(self.plugin._extract_at_targets(event), ["openid:" + "B" * 32])
+
+    async def test_raw_mentions_multiple_targets_never_adjust(self):
+        event = await self.official_event(" 调整余额 1 ", [{"id": "B" * 32}, {"id": "C" * 32}])
+        reply = await self.collect(self.plugin.handle_adjust_balance, event, "1")
+        self.assertEqual(reply, self.plugin.t("target.too_many"))
+        self.core.api_request.assert_not_awaited()
+
+    async def test_raw_mentions_ignore_nicknames_and_quoted_mentions(self):
+        event = await self.official_event(" 打劫 @显示昵称 ", [])
+        event.message_obj.raw_message.raw_data["msg_elements"] = [{"mentions": [{"id": "B" * 32}]}]
+        self.assertEqual(self.plugin._extract_at_targets(event), [])
+        self.assertIsNone(self.plugin._resolve_target(event, "@显示昵称"))
+        self.core.api_request.assert_not_awaited()
+
+    async def test_raw_mentions_sdk_fallback_and_numeric_openid(self):
+        event = FakeEvent()
+        event.message_obj.raw_message = SimpleNamespace(mentions=[SimpleNamespace(id="0" * 31 + "1", is_you=False)])
+        self.assertEqual(self.plugin._extract_at_targets(event), ["openid:" + "0" * 31 + "1"])
+        event.message_obj.raw_message = {"mentions": [{"member_openid": "B" * 32, "id": "other-id"}]}
+        self.assertEqual(self.plugin._extract_at_targets(event), ["openid:" + "B" * 32])
+
+    async def test_raw_mentions_do_not_override_onebot_qq(self):
+        event = FakeEvent(platform="aiocqhttp", sender="123456", segments=[At(qq=70001)])
+        event.message_obj.raw_message = {"mentions": [{"id": "B" * 32}]}
+        self.assertEqual(self.plugin._extract_at_targets(event), ["qq:70001"])
+
+
 if __name__ == "__main__":
     unittest.main()

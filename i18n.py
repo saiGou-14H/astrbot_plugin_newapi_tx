@@ -313,7 +313,7 @@ _TRANSLATIONS["zh"].update({
     "bind.openid_disabled": "当前是官方机器人身份。请先在插件配置中开启 OpenID 绑定，再发送绑定指令。",
     "bind.already_bound": "当前身份已绑定网站ID {site_id}，无需重复绑定。",
     "unbind.success": "✅ 网站ID {site_id} 的全部 QQ/OpenID 绑定已解除（原身份：{qq}）。",
-    "heist.no_target": "🤔 未收到目标身份。请发送「打劫 对方的网站ID」，例如「打劫 13」；也可传 QQ号、OpenID 或实际 @目标。QQ官机未传递成员提及时，显示昵称无法用于查找。",
+    "heist.no_target": "🤔 未识别到目标。请从QQ成员列表真正 @ 一位已绑定的成员，或发送「打劫 网站ID」（例如「打劫 13」）。手工输入的 @昵称 不包含账号身份，无法用于查找。",
 })
 _TRANSLATIONS["en"].update({
     "common.at_or_id_required": "Enter a website ID, QQ number or OpenID, or mention one target. Use a website ID when the official bot does not receive member mentions.",

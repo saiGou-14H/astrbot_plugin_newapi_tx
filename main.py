@@ -16,6 +16,7 @@ from .newapi_utils import NewApiCore
 from .heist_logic import HeistLogic
 from .i18n import translate
 from .config_utils import config_get
+from .qq_mentions import official_mention_ids
 
 def load_plugin_version() -> str:
     """
@@ -319,6 +320,24 @@ class NewApiSuitePlugin(Star):
             target = f"{kind}:{value}"
             if target not in targets:
                 targets.append(target)
+        if kind == "openid":
+            # QQ 群适配器保留原始 mentions，但只为机器人自身生成 At。
+            raw = getattr(getattr(event, "message_obj", None), "raw_message", None)
+            recovered = official_mention_ids(raw, self_id)
+            component_count = len(targets)
+            for identity in recovered:
+                target = f"openid:{identity}"
+                if target not in targets:
+                    targets.append(target)
+            # 只记录计数，不记录 OpenID、昵称、消息内容或原始事件。
+            get_extra = getattr(event, "get_extra", None)
+            set_extra = getattr(event, "set_extra", None)
+            if callable(get_extra) and callable(set_extra) and not get_extra("newapi_target_checked"):
+                logger.info(
+                    f"[NewAPI Target] component_targets={component_count} "
+                    f"raw_member_targets={len(recovered)} resolved_targets={len(targets)}"
+                )
+                set_extra("newapi_target_checked", True)
         return targets
 
     def _extract_at_qq(self, event: AstrMessageEvent) -> Optional[str]:
