@@ -29,6 +29,7 @@ if "compat_plugin" not in sys.modules:
 from compat_plugin.newapi_utils import NewApiCore
 from compat_plugin.heist_logic import HeistLogic
 from compat_plugin.main import NewApiSuitePlugin
+from compat_plugin.qq_mentions import official_mention_ids
 
 
 class FakeEvent:
@@ -396,6 +397,29 @@ class CommandTests(unittest.IsolatedAsyncioTestCase):
         event = FakeEvent(platform="aiocqhttp", sender="123456", segments=[At(qq=70001)])
         event.message_obj.raw_message = {"mentions": [{"id": "B" * 32}]}
         self.assertEqual(self.plugin._extract_at_targets(event), ["qq:70001"])
+
+    async def test_register_new_qq_group_message_parser_in_live_state(self):
+        parser = lambda payload: payload
+        state = SimpleNamespace(parsers={}, parse_group_message_create=parser)
+        client = SimpleNamespace(_connection=SimpleNamespace(state=state))
+        platform = SimpleNamespace(get_client=lambda: client)
+        self.plugin.context = SimpleNamespace(
+            platform_manager=SimpleNamespace(get_insts=lambda: [platform])
+        )
+        self.plugin._ensure_qq_group_message_parser()
+        self.assertIs(state.parsers["group_message_create"], parser)
+
+    async def test_live_group_message_parser_preserves_member_mentions(self):
+        from astrbot.core.platform.sources.qqofficial.qqofficial_platform_adapter import (
+            PatchedGroupMessage,
+        )
+        payload = {
+            "id": "synthetic", "group_openid": "group",
+            "author": {"member_openid": "A" * 32},
+            "content": "打劫", "mentions": [{"id": "B" * 32}],
+        }
+        message = PatchedGroupMessage(None, "event", payload)
+        self.assertEqual(official_mention_ids(message, "qq_official"), ["B" * 32])
 
 
 if __name__ == "__main__":

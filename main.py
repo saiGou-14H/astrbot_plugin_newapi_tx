@@ -323,6 +323,7 @@ class NewApiSuitePlugin(Star):
         if kind == "openid":
             # QQ 群适配器保留原始 mentions，但只为机器人自身生成 At。
             raw = getattr(getattr(event, "message_obj", None), "raw_message", None)
+            recovered = official_mention_ids(raw, self_id)
             for identity in recovered:
                 target = f"openid:{identity}"
                 if target not in targets:
@@ -360,7 +361,28 @@ class NewApiSuitePlugin(Star):
                     binding.get('qq_id', binding.get('openid')), data.get('quota', 0)
                 )
 
+    def _ensure_qq_group_message_parser(self) -> None:
+        """Make newer GROUP_MESSAGE_CREATE events reach AstrBot's live SDK state.
+
+        qq-botpy snapshots its parser methods into ``state.parsers`` when the
+        client is constructed. The QQ adapter adds the patched parser method
+        afterward, so the existing state otherwise drops this newer event.
+        """
+        manager = getattr(getattr(self, "context", None), "platform_manager", None)
+        get_insts = getattr(manager, "get_insts", None)
+        if not callable(get_insts):
+            return
+        for platform in get_insts() or []:
+            client = getattr(platform, "get_client", lambda: None)()
+            state = getattr(getattr(client, "_connection", None), "state", None)
+            parsers = getattr(state, "parsers", None)
+            parser = getattr(state, "parse_group_message_create", None)
+            if isinstance(parsers, dict) and callable(parser):
+                parsers["group_message_create"] = parser
+                logger.info("[NewAPI Suite] QQ GROUP_MESSAGE_CREATE parser registered")
+
     async def initialize(self):
+        self._ensure_qq_group_message_parser()
         init_success = await self.core.initialize()
         if init_success:
             logger.info("[NewAPI Suite] 核心服务初始化成功。" )
