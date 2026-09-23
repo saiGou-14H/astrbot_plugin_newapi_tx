@@ -18,7 +18,7 @@
 
 目标也支持 OpenID 和真实成员提及。文本数字保留“网站 ID 优先，再尝试 QQ 号”的原有规则，但网站 ID 会查两张绑定表。明确的 @ 只按平台身份查询，不会转成碰巧相同的网站 ID。需要消歧义时可输入 `qq:数字`、`openid:身份`、`site:网站ID`。
 
-官方 QQ 适配器理论上可保留原始消息中的 `mentions`，插件会防御性读取成员 OpenID（排除机器人自身、重复项和仅显示昵称的文本），不会读取 OneBot 的 raw 字段，也不会从引用消息或昵称猜测身份。QQ 近期部分事件把带 @ 的消息从 `GROUP_AT_MESSAGE_CREATE` 切换为 `GROUP_MESSAGE_CREATE`；AstrBot 适配器虽然提供了后者的处理器，但 qq-botpy 会在登录时快照 parser 表，登录后新增的 parser 方法不会自动进入已存在的 `state.parsers`。插件现在按官方群管插件的做法包裹 `_bot_login`，登录完成后注册 `group_message_create` parser。若收到旧的 `GROUP_AT_MESSAGE_CREATE` 且上游仍不提供成员 `mentions`，仍无法安全恢复目标，请使用网站 ID。
+官方 QQ 适配器理论上可保留原始消息中的 `mentions`，插件会防御性读取成员 OpenID（排除机器人自身、重复项和仅显示昵称的文本），不会读取 OneBot 的 raw 字段，也不会从引用消息或昵称猜测身份。QQ 近期部分事件把带 @ 的消息从 `GROUP_AT_MESSAGE_CREATE` 切换为 `GROUP_MESSAGE_CREATE`；AstrBot 适配器虽然提供了后者的处理器，但本机运行中的 qq-botpy parser 表没有稳定包含该事件。插件现在按官方群管插件的 GitHub 做法包裹 `_bot_login`，登录完成后把 `group_message_create` parser 写入 live `state.parsers`。若收到旧的 `GROUP_AT_MESSAGE_CREATE` 且上游仍不提供成员 `mentions`，仍无法安全恢复目标，请使用网站 ID。
 
 ## 修复范围
 
