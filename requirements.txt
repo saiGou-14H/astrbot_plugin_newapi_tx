@@ -1,0 +1,4 @@
+aiomysql
+aiosqlite
+httpx
+python-dotenv

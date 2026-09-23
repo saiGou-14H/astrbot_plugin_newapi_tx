@@ -1,0 +1,210 @@
+{
+    "api_settings": {
+        "description": "New API 网站配置（留空则回退到 .env 文件）",
+        "type": "object",
+        "items": {
+            "api_base_url": { "description": "New API 网站地址（结尾不带 /），留空则使用 .env", "type": "string", "default": "" },
+            "api_access_token": { "description": "New API 后台生成的令牌，留空则使用 .env", "type": "string", "default": "" },
+            "api_admin_user_id": { "description": "执行管理员操作时使用的用户 ID，留空则使用 .env", "type": "int", "default": 0 }
+        }
+    },
+    "database_settings": {
+        "description": "数据库（MySQL）（留空则回退到 .env 文件）",
+        "type": "object",
+        "items": {
+            "host": { "description": "MySQL 主机地址，留空则使用 .env", "type": "string", "default": "" },
+            "port": { "description": "MySQL 端口，0 表示使用 .env", "type": "int", "default": 0 },
+            "user": { "description": "MySQL 用户名，留空则使用 .env", "type": "string", "default": "" },
+            "password": { "description": "MySQL 密码，留空则使用 .env", "type": "string", "default": "" },
+            "name": { "description": "MySQL 数据库名称，留空则使用 .env", "type": "string", "default": "" }
+        }
+    },
+    "sqlite_settings": {
+        "description": "SQLite 模式（⚠️ SQLite 与 MySQL 为两套独立数据，切换模式不会自动迁移，需重新绑定）",
+        "type": "object",
+        "items": {
+            "use_sqlite_mode": { "description": "启用后使用 SQLite 单文件存储绑定与打劫日志，不再连接 MySQL（开启后上方 MySQL 数据库配置将被忽略）", "type": "bool", "default": false }
+        }
+    },
+    "binding_settings": {
+        "description": "核心绑定功能",
+        "type": "object",
+        "items": {
+            "binding_group": { "description": "绑定后自动设置的用户组", "type": "string", "default": "default" },
+            "min_qq_level": { "description": "允许绑定的最低QQ等级", "type": "int", "default": 16 },
+            "quota_display_ratio": { "description": "额度显示汇率 (原始Quota / 此值)", "type": "int", "default": 500000 },
+            "forbidden_website_ids": { "description": "禁止绑定的网站ID黑名单（仅拦截新增绑定，已绑定不受影响）", "type": "list", "default": [] },
+            "forbidden_user_ids": { "description": "禁止绑定的用户QQ黑名单（仅拦截新增绑定，已绑定不受影响）", "type": "list", "default": [] },
+            "enable_openid_binding": { "description": "是否支持官机 OpenID 格式绑定：开启后绑定时使用 openid 而非 QQ 号，OpenID 绑定关系单独存储于 newapi_openid_bindings 表，且打劫支持以 openid 为目标", "type": "bool", "default": false },
+            "wild_bind_group_only": { "description": "仅野机(QQ号)绑定修改用户组：开启后 OpenID(官机) 绑定不再改动网站用户组，绑定成功提示会注明「官机绑定不改分组」", "type": "bool", "default": false },
+            "openid_require_qq_bound": { "description": "官机(OpenID)绑定要求该网站 ID 已绑有 QQ 号：开启后未在野机绑定过 QQ 的网站 ID 无法在官机完成绑定", "type": "bool", "default": false }
+        }
+    },
+    "check_in_settings": {
+         "description": "每日签到功能",
+         "type": "object",
+         "items": {
+            "enabled": { "description": "是否启用签到功能", "type": "bool", "default": true },
+            "wild_bot_priority": { "description": "野机优先：同一网站账号同时绑有 QQ 与 OpenID 时，若签到同时经官机(OpenID)与野机(QQ号)触发，官机侧自动让行约1.5秒，由野机先完成签到", "type": "bool", "default": true },
+            "timezone_offset_hours": { "description": "时区偏移量 (例如 UTC+8 填 8)", "type": "int", "default": 8 },
+            "min_display_quota": { "description": "每日签到可获得的最小显示额度", "type": "float", "default": 1500 },
+            "max_display_quota": { "description": "每日签到可获得的最大显示额度", "type": "float", "default": 1500 },
+            "double_chance": { "description": "触发翻倍奖励的概率", "type": "float", "default": 0.1 },
+            "diminish_enabled": { "description": "是否启用余额衰减（余额越多，签到最大值每超一档减半，最低值不变）", "type": "bool", "default": false },
+            "diminish_threshold": { "description": "余额衰减阈值（显示额度），超过此值后开始按档位减半", "type": "float", "default": 10000.0 },
+            "first_check_in_bonus_enabled": { "description": "是否发放首次签到奖励", "type": "bool", "default": true },
+            "first_check_in_bonus_display_quota": { "description": "首次签到额外奖励的显示额度", "type": "float", "default": 2 },
+            "check_in_success_template": { "description": "签到成功的消息模板", "type": "text", "default": "签到成功！您获得了 {display_added} 额度，当前剩余总额度为 {display_total}。" },
+            "check_in_doubled_template": { "description": "签到触发翻倍的消息模板", "type": "text", "default": "🎉 好运连连！签到成功并触发了双倍奖励！🎉\n\n您获得了 {display_added} 额度，当前剩余总额度为 {display_total}。" },
+            "first_check_in_success_template": { "description": "首次签到成功的消息模板", "type": "text", "default": "✨ 欢迎您的第一次签到！✨\n\n您获得了 {display_added} 额度 (内含一份额外新人礼包哦！)\n当前剩余总额度为 {display_total}。" }
+         }
+    },
+    "group_leave_settings": {
+        "description": "退群自动净化",
+        "type": "object",
+        "items": {
+            "group_monitoring_list": { "description": "需要监控的群号列表", "type": "list", "default": [] },
+            "revert_group_on_leave": { "description": "退群后恢复的用户组", "type": "string", "default": "default" }
+        }
+    },
+    "group_whitelist_settings": {
+        "description": "群白名单（只监听配置群）",
+        "type": "object",
+        "items": {
+            "enabled": { "description": "是否启用群白名单；启用后「签到 / 打劫 / 查询余额」仅在下方群号列表内响应，其余群与私聊静默忽略", "type": "bool", "default": false },
+            "group_list": { "description": "允许响应的群号列表（仅当 enabled 开启时生效）", "type": "list", "default": [] }
+        }
+    },
+    "heist_settings": {
+        "description": "【娱乐功能】打劫设置",
+        "type": "object",
+        "items": {
+            "enabled": { "description": "是否启用打劫功能", "type": "bool", "default": true },
+            "max_attempts_per_day": { "description": "每个用户每天可以主动打劫的次数", "type": "int", "default": 1 },
+            "max_defenses_per_day": { "description": "每个用户每天被【成功】打劫的次数上限", "type": "int", "default": 3 },
+            "min_amount": { "description": "成功打劫时，获得的最小【显示额度】", "type": "float", "default": 5.0 },
+            "max_amount": { "description": "成功打劫时，获得的最大【显示额度】", "type": "float", "default": 40.0 },
+            "critical_chance": { "description": "触发暴击（双倍奖励）的概率 (0.0 到 1.0)", "type": "float", "default": 0.1 },
+            "failure_chance": { "description": "打劫失败并触发惩罚的概率 (0.0 到 1.0)", "type": "float", "default": 0.5 },
+            "failure_penalty": { "description": "打劫失败时，赔偿给对方的【显示额度】", "type": "float", "default": 100.0 },
+            "cooldown_seconds": { "description": "两次打劫之间的冷却时间（秒）", "type": "int", "default": 3600 },
+            "success_template": { 
+                "description": "打劫成功的消息模板。可用变量: {gain}", 
+                "type": "text", 
+                "default": "✅ 打劫成功！你悄悄地从对方口袋里摸走了 {gain:.2f} 额度。" 
+            },
+            "critical_template": { 
+                "description": "打劫暴击的消息模板。可用变量: {gain}", 
+                "type": "text", 
+                "default": "🎉 暴击！你的手法如此娴熟，居然摸走了双倍的 {gain:.2f} 额度！" 
+            },
+            "failure_template": { 
+                "description": "打劫失败的消息模板。可用变量: {penalty}", 
+                "type": "text", 
+                "default": "💥 失手了！你在打劫时笨手笨脚，反被对方揍了一顿，赔偿了 {penalty:.2f} 额度。" 
+            },
+            "attempts_exceeded_template": { 
+                "description": "打劫者次数用尽的提示", 
+                "type": "text", 
+                "default": "🥵 你今天已经打劫累了，先去歇会儿吧，明天再来。" 
+            },
+            "defenses_exceeded_template": { 
+                "description": "受害者次数用尽的提示。可用变量: {victim_id}", 
+                "type": "text", 
+                "default": "🛡️ 对方(ID:{victim_id})今天已经被打劫太多次了，看起来已经有了防备，换个目标吧。" 
+            },
+            "victim_not_found_template": { 
+                "description": "未找到目标的提示。可用变量: {victim_identifier}", 
+                "type": "text", 
+                "default": "💨 你朝着空气挥舞拳头，但并没有找到ID为 {victim_identifier} 的目标。" 
+            },
+            "cannot_rob_self_template": { 
+                "description": "打劫自己的提示", 
+                "type": "text", 
+                "default": "🤦‍♂️ 你不能打劫你自己，这毫无意义！" 
+            },
+            "robber_not_bound_template": { 
+                "description": "打劫者未绑定的提示", 
+                "type": "text", 
+                "default": "🤔 你自己都还没绑定账号，抢来的钱往哪儿放呢？快去发送「绑定 你的网站ID」完成绑定吧！" 
+            },
+            "cooldown_template": {
+                "description": "打劫冷却中的提示。可用变量: {remaining_time}",
+                "type": "text",
+                "default": "⏳ 你刚刚打劫完，正在被官府通缉呢！先躲一会儿吧，还剩 {remaining_time} 秒才能再次行动。"
+            }
+        }
+    },
+    "leaderboard_settings": {
+        "description": "【排行榜】余额榜与打劫榜",
+        "type": "object",
+        "items": {
+            "enabled": { "description": "是否启用排行榜功能", "type": "bool", "default": false },
+            "top_n": { "description": "排行榜显示的名次数量", "type": "int", "default": 10 }
+        }
+    },
+    "consumption_leaderboard_settings": {
+        "description": "【排行榜】全站24小时消耗榜（需 New API 开启「记录消耗日志」）",
+        "type": "object",
+        "items": {
+            "enabled": { "description": "是否启用消耗排行榜功能（依赖 New API 的消耗日志，若未开启记录则榜单为空）", "type": "bool", "default": false },
+            "top_n": { "description": "消耗榜显示的名次数量", "type": "int", "default": 10 },
+            "window_hours": { "description": "统计的时间窗口（小时）", "type": "int", "default": 24 },
+            "show_quota": { "description": "是否在每行额外显示网站额度消耗", "type": "bool", "default": false },
+            "show_qq": { "description": "是否在每行显示绑定用户的QQ号（已绑定则显示，未绑定不影响）", "type": "bool", "default": true }
+        }
+    },
+    "optional_pm_settings": {
+        "description": "可选的私信通知",
+        "type": "object",
+        "items": {
+            "enable_bind_success_pm": { "description": "是否在绑定成功后发送私信", "type": "bool", "default": true },
+            "bind_success_pm_template": { "description": "绑定成功私信的内容模板", "type": "text", "default": "绑定成功！" }
+        }
+    },
+    "i18n_settings": {
+        "description": "语言 / Language",
+        "type": "object",
+        "items": {
+            "language": {
+                "description": "插件回复语言 / Reply language",
+                "type": "string",
+                "options": ["zh", "en"],
+                "labels": ["中文", "English"],
+                "default": "zh"
+            }
+        }
+    },
+    "reply_settings": {
+        "description": "回复输出",
+        "type": "object",
+        "items": {
+            "official_markdown": { "description": "官机回复使用Markdown：来自官方机器人(QQ/OpenID)的请求，回复按 QQ 原生 Markdown 发送（换行自动转 \\r）；野机始终保持纯文本。官方机器人无 Markdown 权限时框架自动回退普通文本", "type": "bool", "default": true }
+        }
+    },
+    "red_packet_settings": {
+        "description": "红包（拼手气，管理员凭空发放）",
+        "type": "object",
+        "items": {
+            "enabled": { "description": "是否启用红包功能", "type": "bool", "default": true },
+            "user_send_enabled": { "description": "普通用户个人红包：用户可用「个人红包 [份数] [总额度]」从自己余额扣款发红包；每满 user_send_balance_per_send 余额可发 1 次/日，每日上限 user_send_max_per_day 次", "type": "bool", "default": true },
+            "user_send_balance_per_send": { "description": "个人红包次数门槛：每满此显示额度可发 1 次/日（如 5 = 余额5可发1次、10可发2次）", "type": "float", "default": 5 },
+            "user_send_max_per_day": { "description": "个人红包每日发送次数上限（与余额门槛取较小值）", "type": "int", "default": 10 },
+            "official_only": { "description": "红包仅限官机：开启后发红包、抢红包等所有红包指令仅可通过官方机器人（OpenID 身份）触发，野机收到的请求一律静默忽略（不回复、零消息量，降低风控风险）；发红包公告会自动提示仅限官机", "type": "bool", "default": false },
+            "expire_hours": { "description": "红包有效期（小时），超时后不能再抢", "type": "int", "default": 24 },
+            "max_grab_count": { "description": "单个红包最大份数上限", "type": "int", "default": 100 },
+            "max_total_display": { "description": "单个红包总额度上限（显示额度）", "type": "float", "default": 100000 }
+        }
+    },
+    "debug_settings": {
+        "description": "调试模式（日常使用保持关闭）",
+        "type": "object",
+        "items": {
+            "enabled": {
+                "description": "开启后输出详细诊断日志：如消耗榜每行的缓存原始值/最终取值、兜底查询结果、完整渲染全文等，用于定位显示类问题",
+                "type": "bool",
+                "default": false
+            }
+        }
+    }
+}
