@@ -381,6 +381,77 @@ class QQCompatTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("无法查询", await query_group_receive_mode(event))
         factory.assert_not_called()
 
+    async def test_missing_target_automatically_probes_once_without_delaying_command(self):
+        self.compat.install(self.client)
+        self.plugin._qq_compat = self.compat
+        self.client.http._token = SimpleNamespace(access_token=SECRET)
+        _, event = await self.deliver(payload("查余额", None))
+        started, release = asyncio.Event(), asyncio.Event()
+        async def pending(_event):
+            started.set()
+            await release.wait()
+            return "only_mention（仅提及）"
+        with patch("compat_plugin.qq_compat.query_group_receive_mode", AsyncMock(side_effect=pending)) as query:
+            self.assertIsNone(self.plugin._resolve_target(event, ""))
+            self.assertEqual(self.platform.commit_event.call_count, 1)
+            self.assertEqual(len(self.compat.probe_tasks), 1)
+            await asyncio.wait_for(started.wait(), 1)
+            self.assertIsNone(self.plugin._resolve_target(event, ""))
+            release.set()
+            await asyncio.gather(*self.compat.probe_tasks)
+            self.assertIsNone(self.plugin._resolve_target(event, ""))
+            query.assert_awaited_once()
+        self.plugin.core.lookup_binding.assert_not_awaited()
+        self.plugin.core.adjust_balance_by_identifier.assert_not_awaited()
+        logs = "\n".join(str(call) for call in self.logger.mock_calls)
+        self.assertIn("receive_mode=only_mention", logs)
+        for secret in (GROUP, SENDER, TARGET, SECRET, BODY):
+            self.assertNotIn(secret, logs)
+
+    async def test_automatic_probe_skips_known_targets_and_missing_auth(self):
+        self.compat.install(self.client)
+        self.plugin._qq_compat = self.compat
+        with patch("compat_plugin.qq_compat.query_group_receive_mode", AsyncMock()) as query:
+            _, missing = await self.deliver(payload("查余额", None))
+            self.assertIsNone(self.plugin._resolve_target(missing, ""))
+            self.client.http._token = SimpleNamespace(access_token=SECRET)
+            self.assertEqual(self.plugin._resolve_target(missing, "13"), "13")
+            _, known = await self.deliver()
+            self.assertEqual(self.plugin._resolve_target(known, ""), "openid:" + TARGET)
+            self.assertFalse(self.compat.probe_tasks)
+            query.assert_not_awaited()
+
+    async def test_automatic_probe_permission_failure_does_not_claim_mode(self):
+        self.compat.install(self.client)
+        self.client.http._token = SimpleNamespace(access_token=SECRET)
+        _, event = await self.deliver(payload("查余额", None))
+        with patch("compat_plugin.qq_compat.query_group_receive_mode", AsyncMock(return_value="无法查询（11253：无此接口权限）")):
+            self.compat.probe_missing_target(event)
+            await asyncio.gather(*self.compat.probe_tasks)
+        logs = "\n".join(str(call) for call in self.logger.mock_calls)
+        self.assertIn("receive_mode=permission_denied_11253", logs)
+        self.assertNotIn("receive_mode=only_mention", logs)
+
+    async def test_unload_cancels_inflight_automatic_probe(self):
+        self.compat.install(self.client)
+        self.client.http._token = SimpleNamespace(access_token=SECRET)
+        _, event = await self.deliver(payload("查余额", None))
+        started, cancelled = asyncio.Event(), asyncio.Event()
+        async def pending(_event):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.set()
+        with patch("compat_plugin.qq_compat.query_group_receive_mode", AsyncMock(side_effect=pending)):
+            self.compat.probe_missing_target(event)
+            await asyncio.wait_for(started.wait(), 1)
+            await self.compat.aclose()
+        self.assertTrue(cancelled.is_set())
+        self.assertFalse(self.compat.probe_tasks)
+        self.assertFalse(self.compat.group_probe_times)
+        self.assertNotIn('_commit', self.client.__dict__)
+
     def test_conflicting_alias_stays_unresolved(self):
         _, aliases = known_mentions({"mentions": [
             {"id": "shared", "member_openid": "first"},

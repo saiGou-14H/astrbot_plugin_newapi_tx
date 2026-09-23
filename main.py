@@ -349,6 +349,9 @@ class NewApiSuitePlugin(Star):
             return target
         raw = str(identifier or "").strip()
         if not raw or raw.startswith("@") or any(c.isspace() for c in raw):
+            compat = getattr(self, "_qq_compat", None)
+            if compat is not None:
+                compat.probe_missing_target(event)
             return None
         return raw
 
@@ -439,7 +442,7 @@ class NewApiSuitePlugin(Star):
         """Remove owned instance hooks and clear the binding cache on unload."""
         compat = getattr(self, "_qq_compat", None)
         if compat is not None:
-            compat.close()
+            await compat.aclose()
             self._qq_compat = None
         await self.delete_kv_data("binding_cache")
         logger.info("[NewAPI Suite] KV 绑定缓存已清空。")

@@ -3,8 +3,11 @@
 AstrBot 4.28.1 already registers the SDK group parsers. These instance hooks
 operate after SDK parsing and before event submission; they never alter login.
 """
+import asyncio
 import contextvars
 import re
+import time
+from types import SimpleNamespace
 from functools import wraps
 
 from astrbot.api.message_components import At, Plain
@@ -110,6 +113,60 @@ class QQMentionCompat:
         self.clients = []
         self.sequence = 0
         self.logged = 0
+        self.probe_tasks = set()
+        self.probe_after = 0.0
+        self.group_probe_times = {}
+
+    def probe_missing_target(self, event):
+        """Observe the current group after a failed target lookup; never send a reply."""
+        from botpy.message import GroupMessage
+        raw = getattr(getattr(event, 'message_obj', None), 'raw_message', None)
+        client = getattr(event, 'bot', None)
+        if not self.active or not isinstance(raw, GroupMessage) or not any(x is client for x in self.clients):
+            return
+        auth = getattr(getattr(client, 'http', None), '_token', None)
+        if not getattr(auth, 'access_token', None):
+            return
+        group = raw.group_openid
+        if not group:
+            return
+        key = (id(client), group)
+        now = time.monotonic()
+        if self.probe_tasks or now < self.probe_after or now - self.group_probe_times.get(key, float('-inf')) < 30:
+            return
+        self.probe_after = now + 10
+        if len(self.group_probe_times) >= 30 and key not in self.group_probe_times:
+            self.group_probe_times.pop(next(iter(self.group_probe_times)))
+        self.group_probe_times[key] = now
+        observed = getattr(event.message_obj, '_newapi_mention_diagnostic', {})
+        seq = observed.get('sequence', 0)
+        seq = seq if type(seq) is int else 0
+        # Keep only references needed for this GET, not the command event or account state.
+        probe_event = SimpleNamespace(bot=client, message_obj=SimpleNamespace(raw_message=raw))
+
+        async def probe():
+            try:
+                result = await query_group_receive_mode(probe_event)
+                code = next((mode for mode in ('only_mention', 'mention_and_context', 'all')
+                             if result.startswith(mode + '（')), None)
+                if code is None:
+                    code = 'permission_denied_11253' if '11253' in result else 'unavailable'
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                code = 'unavailable'
+            if self.active:
+                self.logger.info(f'[NewAPI QQState] sequence={seq} receive_mode={code}')
+
+        task = asyncio.create_task(probe())
+        self.probe_tasks.add(task)
+        task.add_done_callback(self.probe_tasks.discard)
+
+    async def aclose(self):
+        tasks = tuple(self.probe_tasks)
+        self.close()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     def _set(self, client, name, wrapper):
         previous = client.__dict__.get(name, _MISSING)
@@ -164,6 +221,9 @@ class QQMentionCompat:
 
     def close(self):
         self.active = False
+        for task in tuple(self.probe_tasks):
+            task.cancel()
+        self.group_probe_times.clear()
         for client, name, previous, wrapper in reversed(self.patches):
             if getattr(client, name, None) is wrapper:
                 if previous is _MISSING:
