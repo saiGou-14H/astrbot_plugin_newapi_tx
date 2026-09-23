@@ -1,4 +1,6 @@
 import os
+import math
+from astrbot.core.star.filter.command import GreedyStr
 import re
 import asyncio
 from typing import Any, Dict, Optional, Tuple
@@ -13,6 +15,7 @@ from astrbot.api.message_components import At
 from .newapi_utils import NewApiCore
 from .heist_logic import HeistLogic
 from .i18n import translate
+from .config_utils import config_get
 
 def load_plugin_version() -> str:
     """
@@ -55,7 +58,7 @@ def require_binding(f):
                 yield item
             return
 
-        binding = await self.core.get_user_by_identity(sender_id)
+        binding = await self.core.get_user_by_identity(self._sender_identity(event))
 
         if not binding:
             yield self._reply(event, self.t("not_bound"))
@@ -84,6 +87,10 @@ def require_group_whitelist(f):
             
     return wrapper
 
+class TargetSelectionError(ValueError):
+    """A user supplied more than one target for a single-account operation."""
+
+
 def guard_errors(f):
     """全局异常护栏：捕获命令处理中的未预期异常，记录完整堆栈，
     并向用户回复人类可读提示（附带 issue 反馈链接），避免框架直接抛出难懂的错误转储。"""
@@ -92,6 +99,8 @@ def guard_errors(f):
         try:
             async for item in f(self, event, *args, **kwargs):
                 yield item
+        except TargetSelectionError as e:
+            yield self._reply(event, str(e))
         except Exception as e:
             logger.error(f"[NewAPI] 处理命令 {getattr(f, '__name__', '?')} 时发生未预期异常: {e}", exc_info=True)
             try:
@@ -126,11 +135,11 @@ class NewApiSuitePlugin(Star):
         logger.info("[NewAPI Suite] 插件已实例化，准备进行异步初始化...")
         # 启动即打印红包门控关键状态，便于确认运行中的代码与配置
         try:
-            _rp_conf = self.config.get('red_packet_settings', {}) or {}
+            _rp_conf = config_get(self.config, 'red_packet_settings', {}) or {}
             logger.info(
                 "[NewAPI Suite] 红包仅官机 official_only=%s | 官机Markdown=%s | 版本=%s",
                 _rp_conf.get('official_only', False),
-                (self.config.get('reply_settings', {}) or {}).get('official_markdown', True),
+                (config_get(self.config, 'reply_settings', {}) or {}).get('official_markdown', True),
                 PLUGIN_VERSION,
             )
         except Exception as e:
@@ -138,7 +147,7 @@ class NewApiSuitePlugin(Star):
 
     def _resolve_language(self) -> str:
         """解析回复语言，缺省中文。"""
-        lang = self.config.get('i18n_settings.language', 'zh')
+        lang = config_get(self.config, 'i18n_settings.language', 'zh')
         return "en" if str(lang).lower().startswith("en") else "zh"
 
     def t(self, key: str, **kwargs) -> str:
@@ -147,20 +156,27 @@ class NewApiSuitePlugin(Star):
 
     def _is_debug(self) -> bool:
         """是否开启调试模式（debug_settings.enabled），动态读取便于随时切换。"""
-        return bool(self.config.get('debug_settings.enabled', False))
+        return bool(config_get(self.config, 'debug_settings.enabled', False))
 
     def _red_packet_official_only(self) -> bool:
         """红包是否仅限官机（red_packet_settings.official_only），动态读取便于随时切换。"""
         try:
-            conf = self.config.get('red_packet_settings', {}) or {}
+            conf = config_get(self.config, 'red_packet_settings', {}) or {}
             return bool(conf.get('official_only', False))
         except Exception:
             return False
 
     def _is_wild_bot_sender(self, event: AstrMessageEvent) -> bool:
-        """发送方是否野机身份（数字 QQ 号）。官机（OpenID）为非数字字符串。"""
-        sender = event.get_sender_id()
-        return isinstance(sender, int) or str(sender).strip().lstrip('-').isdigit()
+        """优先采用平台信息；官方 OpenID 即使全为数字也不是 QQ 号。"""
+        platform = getattr(event, "get_platform_name", lambda: "")()
+        if platform == "qq_official" or str(event.get_self_id()) == "qq_official":
+            return False
+        sender = str(event.get_sender_id() or "").strip()
+        return sender.isascii() and sender.isdecimal() and len(sender) < 32
+
+    def _sender_identity(self, event: AstrMessageEvent) -> str:
+        kind = "qq" if self._is_wild_bot_sender(event) else "openid"
+        return f"{kind}:{str(event.get_sender_id()).strip()}"
 
     def _sender_display(self, event: AstrMessageEvent) -> str:
         """领取人展示名：优先群消息自带昵称，回退到身份字符串。"""
@@ -182,13 +198,13 @@ class NewApiSuitePlugin(Star):
         官方机器人若无原生 Markdown 权限，AstrBot 框架会自动回退普通文本发送。"""
         if not isinstance(text, str) or not text:
             return text
-        if not self.config.get('reply_settings.official_markdown', True):
+        if not config_get(self.config, 'reply_settings.official_markdown', True):
             return text
         try:
             sender = event.get_sender_id()
         except Exception:
             return text
-        if sender is None or isinstance(sender, int) or str(sender).strip().lstrip('-').isdigit():
+        if sender is None or self._is_wild_bot_sender(event):
             return text
         return text.replace("\n", "\r")
 
@@ -208,7 +224,7 @@ class NewApiSuitePlugin(Star):
         try:
             self._rp_gate_log.append({
                 "time": (datetime.utcnow() + timedelta(
-                    hours=float(self.config.get('check_in_settings.timezone_offset_hours', 0) or 0)
+                    hours=float(config_get(self.config, 'check_in_settings.timezone_offset_hours', 0) or 0)
                 )).strftime("%m-%d %H:%M:%S"),
                 "cmd": cmd,
                 "sender": event.get_sender_id(),
@@ -234,8 +250,8 @@ class NewApiSuitePlugin(Star):
     @filter.permission_type(filter.PermissionType.ADMIN)
     async def handle_rp_diag(self, event: AstrMessageEvent):
         """(管理员) 在对话内查看「红包仅官机」门控状态与最近红包指令的判定记录。"""
-        conf = self.config.get('red_packet_settings', {}) or {}
-        reply_conf = self.config.get('reply_settings', {}) or {}
+        conf = config_get(self.config, 'red_packet_settings', {}) or {}
+        reply_conf = config_get(self.config, 'reply_settings', {}) or {}
         sender = event.get_sender_id()
         wild = self._is_wild_bot_sender(event)
 
@@ -271,7 +287,7 @@ class NewApiSuitePlugin(Star):
         启用后，仅当消息来自 group_whitelist_settings.group_list 中列出的群时返回 True；
         私聊（group_id 为空）与未列出的群一律返回 False，实现「只监听配置群」。
         """
-        conf = self.config.get('group_whitelist_settings', {})
+        conf = config_get(self.config, 'group_whitelist_settings', {})
         if not conf.get('enabled', False):
             return True
         group_list = conf.get('group_list', [])
@@ -289,26 +305,52 @@ class NewApiSuitePlugin(Star):
                 cache[str(website_user_id)] = qq_id
             await self.put_kv_data("binding_cache", cache)
 
-    @staticmethod
-    def _extract_at_qq(event: AstrMessageEvent) -> Optional[int]:
-        """提取消息中第一个 @ 提及（排除机器人自身）的身份，无则返回 None。"""
+    def _extract_at_targets(self, event: AstrMessageEvent) -> list[str]:
+        """明确的 @ 是平台身份，不能降级成同数字的网站 ID。"""
         self_id = str(event.get_self_id() or "").strip()
+        kind = "qq" if self._is_wild_bot_sender(event) else "openid"
+        targets = []
         for seg in event.get_messages():
-            if isinstance(seg, At) and str(seg.qq).strip() != self_id:
-                return seg.qq
-        return None
+            if not isinstance(seg, At):
+                continue
+            value = str(seg.qq or "").strip()
+            if not value or value in (self_id, "qq_official", "all", "0"):
+                continue
+            target = f"{kind}:{value}"
+            if target not in targets:
+                targets.append(target)
+        return targets
+
+    def _extract_at_qq(self, event: AstrMessageEvent) -> Optional[str]:
+        targets = self._extract_at_targets(event)
+        if len(targets) > 1:
+            raise TargetSelectionError(self.t("target.too_many"))
+        return targets[0] if targets else None
 
     @staticmethod
     def _parse_int_safe(value) -> Optional[int]:
         s = str(value).strip() if value is not None else ""
-        return int(s) if s.lstrip('-').isdigit() else None
+        return int(s) if s.isascii() and s.isdecimal() else None
 
-    def _resolve_target(self, event: AstrMessageEvent, identifier) -> Optional[int]:
-        """解析查询/操作目标：优先 @ 提及的 QQ，否则解析数字 ID（网站ID或QQ号）。"""
-        at_qq = self._extract_at_qq(event)
-        if at_qq is not None:
-            return at_qq
-        return self._parse_int_safe(identifier)
+    def _resolve_target(self, event: AstrMessageEvent, identifier) -> Optional[str]:
+        """优先真实 @，其次网站ID/QQ号/OpenID；不从显示昵称猜测身份。"""
+        target = self._extract_at_qq(event)
+        if target is not None:
+            return target
+        raw = str(identifier or "").strip()
+        if not raw or raw.startswith("@") or any(c.isspace() for c in raw):
+            return None
+        return raw
+
+    async def _refresh_balance_cache(self, identifier):
+        _, binding = await self.core.lookup_binding(identifier)
+        if binding:
+            site_id = binding['website_user_id']
+            data = await self.core.get_api_user_data(site_id)
+            if data:
+                self._balance_cache[site_id] = (
+                    binding.get('qq_id', binding.get('openid')), data.get('quota', 0)
+                )
 
     async def initialize(self):
         init_success = await self.core.initialize()
@@ -353,7 +395,7 @@ class NewApiSuitePlugin(Star):
             yield self._reply(event, self.t("query_balance.failed"))
             return
 
-        binding_conf = self.config.get('binding_settings', {})
+        binding_conf = config_get(self.config, 'binding_settings', {})
         ratio = binding_conf.get('quota_display_ratio', 500000)
         display_quota = api_user_data.get("quota", 0) / ratio
 
@@ -387,9 +429,9 @@ class NewApiSuitePlugin(Star):
             yield self._reply(event, self.t("query_other.failed"))
             return
 
-        ratio = self.config.get('binding_settings.quota_display_ratio', 500000)
+        ratio = config_get(self.config, 'binding_settings.quota_display_ratio', 500000)
         display_quota = api_user_data.get("quota", 0) / ratio
-        label = self.t("query_other.label_website") if id_type == "WEBSITE_ID" else self.t("query_other.label_qq")
+        label = self.t({"WEBSITE_ID": "query_other.label_website", "QQ_ID": "query_other.label_qq", "OPENID": "query_other.label_openid"}[id_type])
 
         reply = self.t("query_other.success", label=label, id=target_id, site_id=website_user_id, quota=f"{display_quota:.6f}")
         yield self._reply(event, reply)
@@ -408,22 +450,18 @@ class NewApiSuitePlugin(Star):
             return
         site_id = int(raw_id)
 
-        binding_conf = self.config.get('binding_settings', {})
+        binding_conf = config_get(self.config, 'binding_settings', {})
         sender_id = event.get_sender_id()
         openid_enabled = binding_conf.get('enable_openid_binding', False)
-        # 官机环境 sender_id 为 openid 字符串（非纯数字）时，走 OpenID 绑定
-        is_openid_sender = (
-            openid_enabled
-            and isinstance(sender_id, str)
-            and not sender_id.strip().lstrip('-').isdigit()
-        )
-
-        if is_openid_sender:
-            openid = sender_id.strip()
+        if not self._is_wild_bot_sender(event):
+            if not openid_enabled:
+                yield self._reply(event, self.t("bind.openid_disabled"))
+                return
+            openid = str(sender_id).strip()
             yield self._reply(event, await self._perform_openid_binding(event, openid, site_id))
             return
 
-        user_qq_id = sender_id
+        user_qq_id = int(sender_id)
 
         error_message = (
             await self._check_self_binding(user_qq_id) or
@@ -460,7 +498,7 @@ class NewApiSuitePlugin(Star):
         # 「野机优先」：本次请求经官机（OpenID 绑定）到达、且该网站账号同时绑有 QQ 号时，
         # 先让行一小段时间，使同一用户在野机侧的并发签到稳定获胜；仅官机单独触发时只是多等固定延迟。
         if (
-            self.config.get('check_in_settings.wild_bot_priority', True)
+            config_get(self.config, 'check_in_settings.wild_bot_priority', True)
             and binding.get('openid')
             and await self.core.get_user_by_website_id(binding['website_user_id'])
         ):
@@ -472,13 +510,13 @@ class NewApiSuitePlugin(Star):
 
         status, details = await self.core.perform_check_in(user_qq_id, binding=binding)
         
-        check_in_conf = self.config.get('check_in_settings', {})
+        check_in_conf = config_get(self.config, 'check_in_settings', {})
         
         reply = ""
         match status:
             case "SUCCESS":
                 first_bonus_enabled = check_in_conf.get('first_check_in_bonus_enabled', False)
-                ratio = self.config.get('binding_settings.quota_display_ratio', 500000)
+                ratio = config_get(self.config, 'binding_settings.quota_display_ratio', 500000)
 
                 if details["is_first"] and first_bonus_enabled:
                     template = check_in_conf.get('first_check_in_success_template')
@@ -544,33 +582,27 @@ class NewApiSuitePlugin(Star):
     @filter.permission_type(filter.PermissionType.ADMIN)
     async def handle_universal_lookup(self, event: AstrMessageEvent, identifier: str = ""):
         """(管理员) 智能查询，自动识别网站ID或QQ号。"""
-        raw_id = str(identifier or "").strip()
-        if not raw_id:
+        target_id = self._resolve_target(event, identifier)
+        if target_id is None:
             yield self._reply(event, self.t("common.at_or_id_required"))
             return
-        if not raw_id.isdigit():
-            yield self._reply(event, self.t("bind.id_invalid", input=raw_id))
-            return
-        target_id = int(raw_id)
-
         id_type, binding = await self.core.lookup_binding(target_id)
-        
-        reply = ""
-        match id_type:
-            case "WEBSITE_ID":
-                reply = self.t("lookup.website", site_id=binding['website_user_id'], qq=binding['qq_id'], time=binding['binding_time'].strftime('%Y-%m-%d %H:%M:%S'))
-            case "QQ_ID":
-                reply = self.t("lookup.qq", qq=binding['qq_id'], site_id=binding['website_user_id'], time=binding['binding_time'].strftime('%Y-%m-%d %H:%M:%S'))
-            case "NOT_FOUND":
-                reply = self.t("lookup.not_found", id=target_id)
-        
-        # 双绑定展示：该网站账号若同时存在 OpenID 绑定（官机），一并列出
-        if id_type in ("WEBSITE_ID", "QQ_ID"):
-            extra_openid = await self.core.get_openid_by_website_id(binding['website_user_id'])
-            if extra_openid:
-                reply += self.t("lookup.openid_extra", openid=extra_openid['openid'])
-                
-        yield self._reply(event, reply)
+        if binding is None:
+            yield self._reply(event, self.t("lookup.not_found", id=target_id))
+            return
+
+        site_id = binding['website_user_id']
+        qq_binding = await self.core.get_user_by_website_id(site_id)
+        openid_binding = await self.core.get_openid_by_website_id(site_id)
+        label_key = {"WEBSITE_ID": "query_other.label_website", "QQ_ID": "query_other.label_qq",
+                     "OPENID": "query_other.label_openid"}[id_type]
+        lines = [self.t("lookup.header", label=self.t(label_key), site_id=site_id)]
+        for record, field, label in ((qq_binding, 'qq_id', 'QQ'), (openid_binding, 'openid', 'OpenID')):
+            if record:
+                when = record.get('binding_time')
+                when = when.strftime('%Y-%m-%d %H:%M:%S') if isinstance(when, datetime) else str(when or '-')
+                lines.append(self.t("lookup.identity", label=label, identity=record[field], time=when))
+        yield self._reply(event, "\n".join(lines))
 
     @filter.command("new-tx")
     @guard_errors
@@ -631,7 +663,7 @@ class NewApiSuitePlugin(Star):
         if self._red_packet_official_only_blocked(event, "发红包"):
             return
 
-        conf = self.config.get('red_packet_settings', {})
+        conf = config_get(self.config, 'red_packet_settings', {})
         if not conf.get('enabled', True):
             yield self._reply(event, self.t("rp.disabled"))
             return
@@ -668,7 +700,7 @@ class NewApiSuitePlugin(Star):
             return
 
         # 每份至少 1 原始额度，总额过低无法拆分
-        ratio = self.config.get('binding_settings.quota_display_ratio', 500000) or 1
+        ratio = config_get(self.config, 'binding_settings.quota_display_ratio', 500000) or 1
         if int(round(total_display * ratio)) < grab_count:
             yield self._reply(event, self.t("rp.too_small", count=grab_count))
             return
@@ -706,7 +738,7 @@ class NewApiSuitePlugin(Star):
             return
 
         identity = str(event.get_sender_id())
-        binding = await self.core.get_user_by_identity(identity)
+        binding = await self.core.get_user_by_identity(self._sender_identity(event))
         if not binding:
             yield self._reply(event, self.t("not_bound"))
             return
@@ -765,7 +797,7 @@ class NewApiSuitePlugin(Star):
 
     def _user_rp_date_key(self) -> str:
         """个人红包每日计数的日期键（与签到一致使用配置时区）。"""
-        offset = float(self.config.get('check_in_settings.timezone_offset_hours', 0) or 0)
+        offset = float(config_get(self.config, 'check_in_settings.timezone_offset_hours', 0) or 0)
         return (datetime.utcnow() + timedelta(hours=offset)).date().isoformat()
 
     async def _load_user_rp_daily(self) -> Dict[str, Any]:
@@ -815,7 +847,7 @@ class NewApiSuitePlugin(Star):
             yield self._reply(event, self.t("rp.verify.token_required"))
             return
 
-        verified = await self.core.get_self_by_user_token(raw)
+        verified = await self.core.get_self_by_user_token(raw, expected_user_id=site_id)
         if not verified or verified.get("user_id") != site_id:
             logger.warning(f"[个人红包] 令牌验证失败：site={site_id}")
             yield self._reply(event, self.t("rp.verify.failed"))
@@ -839,7 +871,7 @@ class NewApiSuitePlugin(Star):
         if self._red_packet_official_only_blocked(event, "个人红包"):
             return
 
-        conf = self.config.get('red_packet_settings', {})
+        conf = config_get(self.config, 'red_packet_settings', {})
         if not conf.get('enabled', True):
             yield self._reply(event, self.t("rp.disabled"))
             return
@@ -876,7 +908,7 @@ class NewApiSuitePlugin(Star):
         identity = str(event.get_sender_id())
         binding = event.binding
         site_id = int(binding['website_user_id'])
-        ratio = self.config.get('binding_settings.quota_display_ratio', 500000) or 1
+        ratio = config_get(self.config, 'binding_settings.quota_display_ratio', 500000) or 1
 
         # 首次发红包前的身份验证门槛
         if str(site_id) not in await self._rp_verified_sites():
@@ -962,44 +994,50 @@ class NewApiSuitePlugin(Star):
     @filter.command("调整余额")
     @guard_errors
     @filter.permission_type(filter.PermissionType.ADMIN)
-    async def handle_adjust_balance(
-        self, event: AstrMessageEvent, identifier: str = "", display_adjustment: float = 0.0
-    ):
-        """(管理员) 智能识别 @ 提及、网站ID或QQ号，并调整用户显示额度。"""
-        at_qq = self._extract_at_qq(event)
-        if at_qq is not None:
-            # @ 场景：目标为 @ 提及的 QQ。
-            # 注意：At 段在 AstrBot 的 message_str 中会变成 "@昵称(QQ)" 文本并占据 identifier 位置，
-            # 真正金额由 AstrBot 解析到 display_adjustment（float），故此处不解析 identifier。
-            target_id = at_qq
+    async def handle_adjust_balance(self, event: AstrMessageEvent, arguments: GreedyStr):
+        """(管理员) 调整余额 目标 金额；完整接收文本，兼容 @昵称中包含空格。"""
+        at_target = self._extract_at_qq(event)
+        raw = str(arguments or "").strip()
+        parts = raw.split()
+        if at_target:
+            target_id = at_target
+            amount_text = parts[-1] if parts else ""
+        elif len(parts) == 2:
+            target_id = self._resolve_target(event, parts[0])
+            amount_text = parts[1]
         else:
-            # 非 @ 场景：目标为数字 ID（网站ID 或 QQ号）
-            target_id = self._parse_int_safe(identifier)
-
+            yield self._reply(event, self.t("adjust.usage"))
+            return
         if target_id is None:
             yield self._reply(event, self.t("common.at_or_id_required"))
             return
-
-        # 金额统一取 display_adjustment（AstrBot 已把数字参数转为 float）；0 视为未提供（调整 0 额度无意义）
-        amount = display_adjustment
-        if amount == 0.0:
-            yield self._reply(event, self.t("common.amount_required"))
+        try:
+            amount = float(amount_text)
+        except (TypeError, ValueError):
+            yield self._reply(event, self.t("adjust.invalid_amount"))
+            return
+        if not math.isfinite(amount) or amount == 0:
+            yield self._reply(event, self.t("adjust.invalid_amount"))
             return
 
         status, details = await self.core.adjust_balance_by_identifier(target_id, amount)
-
         reply = ""
         match status:
             case "SUCCESS":
                 key = "adjust.success_inc" if amount >= 0 else "adjust.success_dec"
                 reply = self.t(key, site_id=details['website_user_id'], amount=f"{abs(amount):.6f}", total=f"{details['new_display_quota']:.6f}")
+                await self._refresh_balance_cache(f"site:{details['website_user_id']}")
+            case "APPLIED_BALANCE_UNAVAILABLE":
+                self._balance_cache.pop(details['website_user_id'], None)
+                reply = self.t("adjust.applied_unavailable", site_id=details['website_user_id'])
             case "USER_NOT_FOUND":
                 reply = self.t("adjust.not_found", id=target_id)
             case "API_FETCH_FAILED":
                 reply = self.t("adjust.fetch_failed", site_id=details['website_user_id'])
             case "API_UPDATE_FAILED":
                 reply = self.t("adjust.update_failed", site_id=details['website_user_id'])
-
+            case _:
+                reply = self.t("adjust.invalid_amount")
         yield self._reply(event, reply)
 
     @filter.command("打劫")
@@ -1007,63 +1045,21 @@ class NewApiSuitePlugin(Star):
     @require_group_whitelist
     async def handle_heist_command(self, event: AstrMessageEvent, identifier: str = ""):
         """(娱乐) 打劫目标：@ 提及，或输入 QQ 号 / OpenID（开启 openid 绑定后支持）。"""
-        robber_qq_id = event.get_sender_id()
+        robber_qq_id = self._sender_identity(event)
 
-        # 1. 提取目标：优先 @ 提及，其次文本参数（QQ号 / 网站ID / OpenID）
-        self_id = str(event.get_self_id() or "").strip()
-        segment_summary = []
-        for seg in event.get_messages():
-            seg_qq = getattr(seg, "qq", None)
-            if seg_qq is None:
-                segment_summary.append(type(seg).__name__)
-            else:
-                seg_value = str(seg_qq).strip()
-                segment_summary.append(
-                    f"{type(seg).__name__}(has_qq=true,kind={'numeric' if seg_value.lstrip('-').isdigit() else 'text'},"
-                    f"length={len(seg_value)},self={seg_value == self_id},name={bool(getattr(seg, 'name', None))})"
-                )
-        raw_identifier = str(identifier or "").strip()
-        logger.info(
-            "[NewAPI Heist] 目标解析诊断: self_kind=%s self_length=%d identifier_present=%s "
-            "identifier_numeric=%s segments=%s",
-            "numeric" if self_id.lstrip('-').isdigit() else "text",
-            len(self_id),
-            bool(raw_identifier),
-            raw_identifier.lstrip('-').isdigit(),
-            segment_summary,
-        )
-        target_qq_ids = [
-            seg.qq  # 从 At 消息段中提取目标身份
-            for seg in event.get_messages()
-            if isinstance(seg, At) and str(seg.qq).strip() != self_id
-        ]
-
-        # 2. 校验
-        if len(target_qq_ids) > 1:
+        targets = self._extract_at_targets(event)
+        if len(targets) > 1:
             yield self._reply(event, self.t("heist.too_many"))
             return
-
-        if target_qq_ids:
-            victim_identifier = target_qq_ids[0]  # @：QQ 号
-        else:
-            raw = (identifier or "").strip()
-            if not raw:
-                yield self._reply(event, self.t("heist.no_target"))
-                return
-            # 文本参数：优先数字（QQ号/网站ID），否则视为 OpenID（需开启 openid 绑定）
-            if raw.lstrip('-').isdigit():
-                victim_identifier = int(raw)
-            else:
-                openid_conf = self.config.get('binding_settings', {})
-                if not openid_conf.get('enable_openid_binding', False):
-                    yield self._reply(event, self.t("heist.no_target"))
-                    return
-                victim_identifier = raw
+        victim_identifier = self._resolve_target(event, identifier)
+        if victim_identifier is None:
+            yield self._reply(event, self.t("heist.no_target"))
+            return
 
         status, details = await self.heist_handler.execute_heist(robber_qq_id, victim_identifier)
         
         # 4. 根据结果生成回复
-        heist_conf = self.config.get('heist_settings', {})
+        heist_conf = config_get(self.config, 'heist_settings', {})
         reply = ""
 
         # --- 缓存模板 ---
@@ -1083,25 +1079,17 @@ class NewApiSuitePlugin(Star):
             case "SUCCESS":
                 reply = success_template.format(gain=details['gain'])
                 # 打劫成功后顺便更新余额缓存（抢劫者+受害者），供排行榜使用
-                robber_binding = await self.core.get_user_by_identity(robber_qq_id)
-                victim_binding = await self.core.get_user_by_identity(victim_identifier)
-                for b in (robber_binding, victim_binding):
-                    if b:
-                        data = await self.core.get_api_user_data(b['website_user_id'])
-                        if data:
-                            self._balance_cache[b['website_user_id']] = (b.get('qq_id', b.get('openid')), data.get('quota', 0))
+                await self._refresh_balance_cache(robber_qq_id)
+                await self._refresh_balance_cache(victim_identifier)
             case "CRITICAL":
                 reply = critical_template.format(gain=details['gain'])
                 # 同上
-                robber_binding = await self.core.get_user_by_identity(robber_qq_id)
-                victim_binding = await self.core.get_user_by_identity(victim_identifier)
-                for b in (robber_binding, victim_binding):
-                    if b:
-                        data = await self.core.get_api_user_data(b['website_user_id'])
-                        if data:
-                            self._balance_cache[b['website_user_id']] = (b.get('qq_id', b.get('openid')), data.get('quota', 0))
+                await self._refresh_balance_cache(robber_qq_id)
+                await self._refresh_balance_cache(victim_identifier)
             case "FAILURE":
                 reply = failure_template.format(penalty=details['penalty'])
+                await self._refresh_balance_cache(robber_qq_id)
+                await self._refresh_balance_cache(victim_identifier)
             case "DISABLED":
                 reply = disabled_template
             case "ROBBER_NOT_BOUND":
@@ -1127,12 +1115,12 @@ class NewApiSuitePlugin(Star):
     @guard_errors
     async def handle_leaderboard(self, event: AstrMessageEvent):
         """展示群内余额榜与打劫榜（余额从用户操作缓存读取，无需查API）。"""
-        lb_conf = self.config.get('leaderboard_settings', {})
+        lb_conf = config_get(self.config, 'leaderboard_settings', {})
         if not lb_conf.get('enabled', False):
             yield self._reply(event, self.t("leaderboard.disabled"))
             return
         top_n = max(1, int(lb_conf.get('top_n', 10)))
-        ratio = self.config.get('binding_settings.quota_display_ratio', 500000)
+        ratio = config_get(self.config, 'binding_settings.quota_display_ratio', 500000)
 
         # 余额榜：直接从缓存读取并排序（用户每次签到/查余额/打劫时更新缓存）
         balance_lines = self._build_balance_board_from_cache(top_n, ratio)
@@ -1146,7 +1134,7 @@ class NewApiSuitePlugin(Star):
     @guard_errors
     async def handle_consumption_leaderboard(self, event: AstrMessageEvent):
         """展示全站用户近 N 小时 token 消耗排行榜（用户名 + 已绑定则附 QQ 号），所有用户可用。"""
-        conf = self.config.get('consumption_leaderboard_settings', {})
+        conf = config_get(self.config, 'consumption_leaderboard_settings', {})
         if not conf.get('enabled', False):
             yield self._reply(event, self.t("consumption.disabled"))
             return
@@ -1166,7 +1154,7 @@ class NewApiSuitePlugin(Star):
         stats.sort(key=lambda x: x['tokens'], reverse=True)
         top = stats[:top_n]
 
-        ratio = self.config.get('binding_settings.quota_display_ratio', 500000)
+        ratio = config_get(self.config, 'binding_settings.quota_display_ratio', 500000)
         ratio = ratio if ratio else 1
         show_quota = bool(conf.get('show_quota', False))
         show_qq = bool(conf.get('show_qq', True))
@@ -1281,7 +1269,7 @@ class NewApiSuitePlugin(Star):
         group_id = raw.get("group_id")
         user_id = raw.get("user_id")
 
-        leave_conf = self.config.get('group_leave_settings', {})
+        leave_conf = config_get(self.config, 'group_leave_settings', {})
         monitored_groups_str = leave_conf.get('group_monitoring_list', [])
         monitored_groups = [int(g) for g in monitored_groups_str if str(g).isdigit()]
 
@@ -1384,7 +1372,7 @@ class NewApiSuitePlugin(Star):
         return None
 
     async def _check_qq_level(self, event: AstrMessageEvent, user_qq_id: int) -> Optional[str]:
-        binding_conf = self.config.get('binding_settings', {})
+        binding_conf = config_get(self.config, 'binding_settings', {})
         min_level = binding_conf.get('min_qq_level', 16)
         try:
             stranger_info = await event.bot.get_stranger_info(user_id=user_qq_id, no_cache=True)
@@ -1409,7 +1397,7 @@ class NewApiSuitePlugin(Star):
 
     async def _check_website_id_blacklist(self, website_user_id: int) -> Optional[str]:
         """检查网站ID是否在禁止绑定黑名单中（仅针对新增绑定，已绑定不受影响）。"""
-        binding_conf = self.config.get('binding_settings', {})
+        binding_conf = config_get(self.config, 'binding_settings', {})
         blacklist = binding_conf.get('forbidden_website_ids', [])
         forbidden_ids = set(int(i) for i in blacklist if str(i).lstrip('-').isdigit())
         if website_user_id in forbidden_ids:
@@ -1418,7 +1406,7 @@ class NewApiSuitePlugin(Star):
 
     async def _check_user_blacklist(self, user_qq_id: int) -> Optional[str]:
         """检查用户QQ是否在禁止绑定黑名单中（仅针对新增绑定，已绑定不受影响）。"""
-        binding_conf = self.config.get('binding_settings', {})
+        binding_conf = config_get(self.config, 'binding_settings', {})
         blacklist = binding_conf.get('forbidden_user_ids', [])
         forbidden_ids = set(int(i) for i in blacklist if str(i).lstrip('-').isdigit())
         if user_qq_id in forbidden_ids:
@@ -1435,11 +1423,13 @@ class NewApiSuitePlugin(Star):
         """
         执行最终的绑定操作，包含数据库写入和API更新，失败时回滚。
         """
+        inserted = False
         try:
             await self.core.insert_binding(user_qq_id, website_user_id)
+            inserted = True
             
             api_user_data = await self.core.get_api_user_data(website_user_id)
-            binding_conf = self.config.get('binding_settings', {})
+            binding_conf = config_get(self.config, 'binding_settings', {})
             target_group = binding_conf.get('binding_group', 'default')
             
             if api_user_data:
@@ -1466,7 +1456,8 @@ class NewApiSuitePlugin(Star):
         
         except Exception as e:
             logger.error(f"绑定仪式中发生错误: {e}", exc_info=True)
-            await self.core.delete_binding(qq_id=user_qq_id)
+            if inserted:
+                await self.core.delete_binding(qq_id=user_qq_id, website_user_id=website_user_id)
             return False, self.t("bind.failed")
 
     async def _perform_openid_binding(self, event, openid: str, website_user_id: int) -> str:
@@ -1491,7 +1482,7 @@ class NewApiSuitePlugin(Star):
             return self.t("bind.api_user_not_found", site_id=website_user_id)
 
         # 网站黑名单
-        binding_conf = self.config.get('binding_settings', {})
+        binding_conf = config_get(self.config, 'binding_settings', {})
         blacklist = binding_conf.get('forbidden_website_ids', [])
         forbidden_ids = set(int(i) for i in blacklist if str(i).lstrip('-').isdigit())
         if website_user_id in forbidden_ids:
@@ -1506,11 +1497,15 @@ class NewApiSuitePlugin(Star):
         promote_group = not binding_conf.get('wild_bind_group_only', False)
         target_group = binding_conf.get('binding_group', 'default')
 
+        inserted = False
         try:
             await self.core.insert_openid_binding(openid, website_user_id)
+            inserted = True
             if promote_group:
                 api_user_data = await self.core.get_api_user_data(website_user_id)
-                if api_user_data and api_user_data.get('group') != target_group:
+                if not api_user_data:
+                    raise RuntimeError("API user data unavailable during OpenID binding")
+                if api_user_data.get('group') != target_group:
                     update_payload = {
                         "id": website_user_id,
                         "username": api_user_data.get("username"),
@@ -1529,18 +1524,19 @@ class NewApiSuitePlugin(Star):
             return self.t("bind.openid_success_no_group", openid=openid, site_id=website_user_id)
         except Exception as e:
             logger.error(f"OpenID 绑定失败: {e}", exc_info=True)
-            await self.core.delete_openid_binding(openid=openid)
+            if inserted:
+                await self.core.delete_openid_binding(openid=openid, website_user_id=website_user_id)
             return self.t("bind.failed")
 
     async def _send_success_pm(self, event: AstrMessageEvent, user_qq_id: int, website_user_id: int):
         """如果配置允许，发送绑定成功私信。"""
-        pm_conf = self.config.get('optional_pm_settings', {})
+        pm_conf = config_get(self.config, 'optional_pm_settings', {})
         if not pm_conf.get('enable_bind_success_pm'):
             return
         
         try:
             template = pm_conf.get('bind_success_pm_template', "绑定成功！")
-            group = self.config.get('binding_settings.binding_group', 'default')
+            group = config_get(self.config, 'binding_settings.binding_group', 'default')
 
             user_nickname = str(user_qq_id)
             try:

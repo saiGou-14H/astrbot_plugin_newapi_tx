@@ -301,6 +301,35 @@ _TRANSLATIONS = {
 }
 
 
+_TRANSLATIONS["zh"].update({
+    "common.at_or_id_required": "请提供网站ID、QQ号或OpenID，或 @ 一个目标。官机未传递目标提及时，请直接输入网站ID。",
+    "target.too_many": "一次只能指定一个目标，请移除多余的 @ 提及。",
+    "query_other.label_openid": "OpenID",
+    "lookup.header": "✅ 查询成功！输入类型：{label}\n网站ID：{site_id}",
+    "lookup.identity": "{label}：{identity}\n绑定时间：{time}",
+    "adjust.usage": "用法：调整余额 网站ID 金额，例如：调整余额 13 1.25（增加）或 调整余额 13 -1.25（扣减）。也支持 QQ号、OpenID 或实际 @目标。",
+    "adjust.invalid_amount": "额度必须是有限且非零的数字，换算后至少为 1 个原始额度单位。",
+    "adjust.applied_unavailable": "✅ 网站ID {site_id} 的额度已调整，但暂时未能读取最新余额。请用「查余额」核对，不要重复执行本次调整。",
+    "bind.openid_disabled": "当前是官方机器人身份。请先在插件配置中开启 OpenID 绑定，再发送绑定指令。",
+    "bind.already_bound": "当前身份已绑定网站ID {site_id}，无需重复绑定。",
+    "unbind.success": "✅ 网站ID {site_id} 的全部 QQ/OpenID 绑定已解除（原身份：{qq}）。",
+    "heist.no_target": "🤔 未收到目标身份。请发送「打劫 对方的网站ID」，例如「打劫 13」；也可传 QQ号、OpenID 或实际 @目标。QQ官机未传递成员提及时，显示昵称无法用于查找。",
+})
+_TRANSLATIONS["en"].update({
+    "common.at_or_id_required": "Enter a website ID, QQ number or OpenID, or mention one target. Use a website ID when the official bot does not receive member mentions.",
+    "target.too_many": "Please specify only one target.",
+    "query_other.label_openid": "OpenID",
+    "lookup.header": "✅ Found ({label})\nWebsite ID: {site_id}",
+    "lookup.identity": "{label}: {identity}\nBound at: {time}",
+    "adjust.usage": "Usage: 调整余额 target amount, e.g. 调整余额 13 1.25 or 调整余额 13 -1.25. Target may be a website ID, QQ, OpenID or a real mention.",
+    "adjust.invalid_amount": "Amount must be finite and nonzero, and worth at least one raw quota unit.",
+    "adjust.applied_unavailable": "✅ Quota adjustment for website ID {site_id} was applied, but the latest balance could not be read. Query the balance; do not repeat this adjustment.",
+    "bind.openid_disabled": "Enable OpenID binding in plugin settings before binding through the official bot.",
+    "bind.already_bound": "This identity is already bound to website ID {site_id}.",
+    "unbind.success": "✅ Removed all QQ/OpenID bindings for website ID {site_id} (previous identity: {qq}).",
+    "heist.no_target": "No target identity received. Use 打劫 <website ID> (e.g. 打劫 13), QQ, OpenID or a real mention. A display name alone cannot identify an account.",
+})
+
 # 插件反馈 issue 入口（报错文案统一附带）
 _ISSUE_URL = "https://github.com/Tianxu-Astrbot-Plugins/astrbot_plugin_newapi_tx/issues"
 _ISSUE_FOOTER_ZH = f"\n\n🛠 遇到问题？请到 {_ISSUE_URL} 反馈（建议附上后台日志，我们会尽快处理）"
