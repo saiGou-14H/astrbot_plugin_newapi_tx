@@ -389,6 +389,10 @@ class NewApiSuitePlugin(Star):
         else:
             logger.error("[NewAPI Suite] 核心服务初始化失败。" )
 
+    @filter.on_platform_loaded()
+    async def _register_qq_group_message_parser_after_platform_load(self):
+        self._ensure_qq_group_message_parser()
+
     async def terminate(self):
         """插件被禁用或重载时调用，清空 KV 绑定缓存。"""
         await self.delete_kv_data("binding_cache")
