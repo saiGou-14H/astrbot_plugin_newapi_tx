@@ -323,34 +323,10 @@ class NewApiSuitePlugin(Star):
         if kind == "openid":
             # QQ 群适配器保留原始 mentions，但只为机器人自身生成 At。
             raw = getattr(getattr(event, "message_obj", None), "raw_message", None)
-            recovered = official_mention_ids(raw, self_id)
-            component_count = len(targets)
             for identity in recovered:
                 target = f"openid:{identity}"
                 if target not in targets:
                     targets.append(target)
-            # 只记录计数，不记录 OpenID、昵称、消息内容或原始事件。
-            get_extra = getattr(event, "get_extra", None)
-            set_extra = getattr(event, "set_extra", None)
-            if callable(get_extra) and callable(set_extra) and not get_extra("newapi_target_checked"):
-                if not recovered:
-                    raw_data = getattr(raw, "raw_data", None)
-                    raw_keys = sorted(raw_data.keys()) if isinstance(raw_data, dict) else []
-                    raw_mentions = raw_data.get("mentions") if isinstance(raw_data, dict) else None
-                    object_mentions = getattr(raw, "mentions", None)
-                    msg_elements = getattr(raw, "msg_elements", None)
-                    logger.info(
-                        f"[NewAPI Target] raw_inspect type={type(raw).__name__} "
-                        f"data_keys={','.join(raw_keys)} "
-                        f"data_mentions={len(raw_mentions) if isinstance(raw_mentions, list) else -1} "
-                        f"object_mentions={len(object_mentions) if isinstance(object_mentions, list) else -1} "
-                        f"msg_elements={len(msg_elements) if isinstance(msg_elements, list) else -1}"
-                    )
-                logger.info(
-                    f"[NewAPI Target] component_targets={component_count} "
-                    f"raw_member_targets={len(recovered)} resolved_targets={len(targets)}"
-                )
-                set_extra("newapi_target_checked", True)
         return targets
 
     def _extract_at_qq(self, event: AstrMessageEvent) -> Optional[str]:
