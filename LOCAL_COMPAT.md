@@ -18,7 +18,7 @@
 
 目标也支持 OpenID 和真实成员提及。文本数字保留“网站 ID 优先，再尝试 QQ 号”的原有规则，但网站 ID 会查两张绑定表。明确的 @ 只按平台身份查询，不会转成碰巧相同的网站 ID。需要消歧义时可输入 `qq:数字`、`openid:身份`、`site:网站ID`。
 
-官方 QQ 适配器理论上可保留原始消息中的 `mentions`，插件会防御性读取成员 OpenID（排除机器人自身、重复项和仅显示昵称的文本），不会读取 OneBot 的 raw 字段，也不会从引用消息或昵称猜测身份。对本机当前 QQ 官方账号的真实事件验收显示，`GROUP_AT_MESSAGE_CREATE` 实际只到达机器人自身提及：原始数据没有 `mentions`，SDK 对象的 mentions 数量为 0，消息内容也没有成员身份。因此当前生产环境无法凭 `@成员` 恢复目标，请使用网站 ID；这属于 QQ 事件上游未提供身份字段，插件无法安全猜测。
+官方 QQ 适配器理论上可保留原始消息中的 `mentions`，插件会防御性读取成员 OpenID（排除机器人自身、重复项和仅显示昵称的文本），不会读取 OneBot 的 raw 字段，也不会从引用消息或昵称猜测身份。QQ 近期部分事件把带 @ 的消息从 `GROUP_AT_MESSAGE_CREATE` 切换为 `GROUP_MESSAGE_CREATE`；AstrBot 适配器虽然提供了后者的处理器，但 qq-botpy 会在登录时快照 parser 表，登录后新增的 parser 方法不会自动进入已存在的 `state.parsers`。插件现在按官方群管插件的做法包裹 `_bot_login`，登录完成后注册 `group_message_create` parser。若收到旧的 `GROUP_AT_MESSAGE_CREATE` 且上游仍不提供成员 `mentions`，仍无法安全恢复目标，请使用网站 ID。
 
 ## 修复范围
 
@@ -37,7 +37,7 @@
 
 ## 验证
 
-本次验收：36 个离线回归用例全部通过（17 核心、19 指令）；4 个独立 MySQL 事务用例在前一版核心修复中已全部通过。当前完整发现运行结果为 `40` 个用例、其中 4 个 MySQL 用例因未启用一次性测试数据库而跳过。7 个管理员权限装饰器与部署前一致。线上只读验证通过：`13`、`"13"`、`site:13` 及对应 OpenID 均命中同一网站账号；打劫双方解析返回 `VALID`；读取用户与管理员 API 检查成功。没有执行线上额度变更或绑定写入。AstrBot 重启后插件初始化成功、WebUI HTTP 200。
+本次验收：42 个离线回归用例中 38 个实际执行全部通过，4 个独立 MySQL 用例因未启用一次性测试数据库而跳过。新增覆盖 `GROUP_MESSAGE_CREATE` parser 表的运行中注册、登录后延迟注册和带 `mentions` 的真实 QQ 适配器消息对象。AstrBot 重启后插件初始化成功，日志确认 parser 已在 QQ 登录后注册，WebUI HTTP 200。没有执行线上额度变更或绑定写入。
 
 `tests/verify_live_readonly.py` 是显式运行的线上只读验收脚本，不属于默认 unittest 自动测试；收集该子进程输出时只显示 `VERIFY_RESULT=` 行，过滤插件原有详细业务日志。
 
