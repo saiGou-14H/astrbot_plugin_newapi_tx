@@ -1,9 +1,4 @@
-"""Recover official QQ member mentions retained by the AstrBot adapter.
-
-GROUP_AT_MESSAGE_CREATE carries member OpenIDs in top-level `mentions`.
-AstrBot 4.28.1 retains raw_data but only emits an At component for the bot.
-Never infer a target from a nickname or from a quoted message's mentions.
-"""
+"""Recover only explicit QQ member identities; never infer from author/nickname."""
 
 
 def official_mention_ids(raw_message, self_id=""):
@@ -13,18 +8,22 @@ def official_mention_ids(raw_message, self_id=""):
         mentions = getattr(raw_message, "mentions", None)
     if not isinstance(mentions, (list, tuple)):
         return []
-    result = []
+    blocked = {str(self_id), "qq_official", "all", "0", ""}
+    entries = []
     for mention in mentions:
         def field(name):
             return mention.get(name) if isinstance(mention, dict) else getattr(mention, name, None)
+        aliases = [value.strip() for name in ("member_openid", "user_openid", "id")
+                   if isinstance(value := field(name), str) and value.strip()]
         if field("is_you") is True or field("bot") is True:
+            blocked.update(aliases)
+        elif aliases:
+            entries.append(aliases)
+    result = []
+    for aliases in entries:
+        if any(alias in blocked for alias in aliases):
             continue
-        identity = field("member_openid") or field("user_openid") or field("id")
-        if not isinstance(identity, str):
-            continue
-        identity = identity.strip()
-        if not identity or identity in (str(self_id), "qq_official", "all", "0"):
-            continue
+        identity = aliases[0]
         if identity not in result:
             result.append(identity)
     return result

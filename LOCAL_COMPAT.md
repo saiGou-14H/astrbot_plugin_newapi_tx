@@ -18,7 +18,21 @@
 
 目标也支持 OpenID 和真实成员提及。文本数字保留“网站 ID 优先，再尝试 QQ 号”的原有规则，但网站 ID 会查两张绑定表。明确的 @ 只按平台身份查询，不会转成碰巧相同的网站 ID。需要消歧义时可输入 `qq:数字`、`openid:身份`、`site:网站ID`。
 
-官方 QQ 适配器理论上可保留原始消息中的 `mentions`，插件会防御性读取成员 OpenID（排除机器人自身、重复项和仅显示昵称的文本），不会读取 OneBot 的 raw 字段，也不会从引用消息或昵称猜测身份。QQ 近期部分事件把带 @ 的消息从 `GROUP_AT_MESSAGE_CREATE` 切换为 `GROUP_MESSAGE_CREATE`；AstrBot 适配器虽然提供了后者的处理器，但本机运行中的 qq-botpy parser 表没有稳定包含该事件。插件现在按官方群管插件的 GitHub 做法包裹 `_bot_login`，登录完成后把 `group_message_create` parser 写入 live `state.parsers`。若收到旧的 `GROUP_AT_MESSAGE_CREATE` 且上游仍不提供成员 `mentions`，仍无法安全恢复目标，请使用网站 ID。
+官方 QQ 的目标只取顶层 `mentions` 中明确提供的成员身份，排除机器人所有已知身份别名、重复项和仅显示昵称的文本。不从 author、引用消息或昵称猜测目标。AstrBot 4.28.1 原生只把机器人自身提及转成 At；本插件在自身目标命令提交前为其他明确成员补 At，并只清理已确认身份的正文标签，保留 SDK 对象与原始数据。只有正文标记而没有成员映射时，保守地交给诊断显示，不把无法排除的机器人标记认作目标。
+
+**更正此前 parser 结论：**实际 SDK 的 ConnectionState 在 `_bot_login` 时创建，晚于 AstrBot 构造期间注册类方法。用真实适配器及模拟 HTTP 登录验证，未加载 NewAPI 插件时 `group_message_create` 已存在、也能保留成员 mentions。此前“运行中 parser 不稳定缺失”的判断没有证据，旧登录/parser 补丁现已移除。日志中的“parser registered”只证明代码执行，不能证明修复了成员目标。
+
+补丁放在持久化插件的 `qq_compat.py`，仅包装 QQ client 实例的两个群回调和同步 `_commit`，不修改镜像源码或 SDK parser。只处理本插件的 `查询`、`查余额`、`调整余额`、`打劫` 和 `提及诊断`。卸载时撤销自有包装；第三方后续包装存在时，已失效的本包装透传。旧版本迁移需重启进程，清掉旧 `_bot_login` 闭包。
+
+### 只读提及诊断
+
+在实际群内发送 `@机器人 提及诊断 @成员`。命令不读写网站账户、绑定或额度，只显示事件类型、原始字段是否存在、SDK/raw mentions 数、正文标签数、新增 At 数、最终目标数，并用当前连接授权执行一次 QQ `GET /v2/groups/{group_openid}/bot_state`。接口查询全局间隔至少 3 秒；错误响应与身份不输出。`11253` 表示没有查询此接口的权限，不能据此判断接收模式关闭。无当前连接凭据时不重新登录。
+
+`enable_group_c2c=True` 只是群/C2C订阅开关，不等于群主已授权全量接收。`recv_msg_setting=all` 也仅证明接收范围，不保证 mentions 完整。普通事件的现行官方文档同样列有 mentions，不能认定只有新事件才支持成员身份。
+
+新增 `[NewAPI QQMention]` 日志仅记录固定事件枚举、布尔值及计数，每次插件生命周期最多 60 条消息；不写原始正文、昵称、OpenID、群号、消息 ID 或令牌。历史普通 event_bus 消息链不足以单独证明原始 mentions 是否存在。
+
+参考：[AstrBot v4.28.1 解析代码](https://github.com/AstrBotDevs/AstrBot/blob/v4.28.1/astrbot/core/platform/sources/qqofficial/qqofficial_platform_adapter.py#L825-L878)、[SDK 历史 issue #168](https://github.com/tencent-connect/botpy/issues/168)、[普通群事件](https://bot.q.qq.com/wiki/develop/api-v2/autogen/event/group_at_message_create.html)、[群接收状态](https://bot.q.qq.com/wiki/develop/api-v2/autogen/api/v2_groups_group_openid_bot_state.get.html)。SDK 历史 issue 不能代替当前账号 payload 验收。
 
 ## 修复范围
 
@@ -37,7 +51,7 @@
 
 ## 验证
 
-本次验收：42 个离线回归用例中 38 个实际执行全部通过，4 个独立 MySQL 用例因未启用一次性测试数据库而跳过。新增覆盖 `GROUP_MESSAGE_CREATE` parser 表的运行中注册、登录后延迟注册和带 `mentions` 的真实 QQ 适配器消息对象。AstrBot 重启后插件初始化成功，日志确认 parser 已在 QQ 登录后注册，WebUI HTTP 200。没有执行线上额度变更或绑定写入。
+本次完整离线回归发现 63 个用例，59 个通过，4 个独立 MySQL 用例因未启用一次性测试数据库而跳过。覆盖真实 SDK 模拟登录后的原生 parser、ws_dispatch、两个群 callback→同步 commit→create_event、真实 CommandFilter、数字 OpenID 前导零、并发/取消、钩子重复安装及卸载恢复、诊断敏感字段排除与只读 GET 模拟。测试未执行线上额度变更或绑定写入。新诊断用于下一条真实消息，不能以合成测试代替实际群的成员身份下发验收。
 
 `tests/verify_live_readonly.py` 是显式运行的线上只读验收脚本，不属于默认 unittest 自动测试；收集该子进程输出时只显示 `VERIFY_RESULT=` 行，过滤插件原有详细业务日志。
 

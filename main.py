@@ -17,6 +17,7 @@ from .heist_logic import HeistLogic
 from .i18n import translate
 from .config_utils import config_get
 from .qq_mentions import official_mention_ids
+from .qq_compat import QQMentionCompat, mention_summary, query_group_receive_mode
 
 def load_plugin_version() -> str:
     """
@@ -320,7 +321,7 @@ class NewApiSuitePlugin(Star):
             target = f"{kind}:{value}"
             if target not in targets:
                 targets.append(target)
-        if kind == "openid":
+        if getattr(event, "get_platform_name", lambda: "")() == "qq_official":
             # QQ 群适配器保留原始 mentions，但只为机器人自身生成 At。
             raw = getattr(getattr(event, "message_obj", None), "raw_message", None)
             recovered = official_mention_ids(raw, self_id)
@@ -361,57 +362,19 @@ class NewApiSuitePlugin(Star):
                     binding.get('qq_id', binding.get('openid')), data.get('quota', 0)
                 )
 
-    def _register_qq_group_message_parser_for_client(self, client) -> bool:
-        state = getattr(getattr(client, "_connection", None), "state", None)
-        parsers = getattr(state, "parsers", None)
-        parser = getattr(state, "parse_group_message_create", None)
-        if not isinstance(parsers, dict) or not callable(parser):
-            return False
-        if parsers.get("group_message_create") is not parser:
-            parsers["group_message_create"] = parser
-            logger.info("[NewAPI Suite] QQ GROUP_MESSAGE_CREATE parser registered")
-        return True
-
-    def _ensure_qq_group_message_parser(self) -> None:
-        """Make newer GROUP_MESSAGE_CREATE events reach AstrBot's live SDK state.
-
-        qq-botpy creates its parser table when the client logs in. The QQ
-        adapter adds the patched parser method before login, but the existing
-        state table must be updated after login as well.
-        """
+    def _install_qq_mention_compat(self):
         manager = getattr(getattr(self, "context", None), "platform_manager", None)
-        get_insts = getattr(manager, "get_insts", None)
-        if not callable(get_insts):
+        if manager is None:
             return
-        for platform in get_insts() or []:
-            get_client = getattr(platform, "get_client", None)
-            if not callable(get_client):
-                continue
-            client = get_client()
-            if self._register_qq_group_message_parser_for_client(client):
-                continue
-            if getattr(client, "_newapi_group_message_parser_hook", False):
-                continue
-            previous_bot_login = getattr(client, "_bot_login", None)
-            if not callable(previous_bot_login):
-                continue
-
-            async def bot_login(
-                token,
-                previous_handler=previous_bot_login,
-                qq_client=client,
-            ):
-                await previous_handler(token)
-                self._register_qq_group_message_parser_for_client(qq_client)
-
-            client._bot_login = bot_login
-            client._newapi_group_message_parser_hook = True
-            logger.info(
-                "[NewAPI Suite] QQ GROUP_MESSAGE_CREATE parser deferred until login"
-            )
+        if getattr(self, "_qq_compat", None) is None:
+            self._qq_compat = QQMentionCompat(logger)
+        for platform in manager.get_insts():
+            from astrbot.core.platform.sources.qqofficial.qqofficial_platform_adapter import QQOfficialPlatformAdapter
+            if isinstance(platform, QQOfficialPlatformAdapter):
+                self._qq_compat.install(platform.get_client())
 
     async def initialize(self):
-        self._ensure_qq_group_message_parser()
+        self._install_qq_mention_compat()
         init_success = await self.core.initialize()
         if init_success:
             logger.info("[NewAPI Suite] 核心服务初始化成功。" )
@@ -419,15 +382,65 @@ class NewApiSuitePlugin(Star):
             logger.error("[NewAPI Suite] 核心服务初始化失败。" )
 
     @filter.on_platform_loaded()
-    async def _register_qq_group_message_parser_after_platform_load(self):
-        self._ensure_qq_group_message_parser()
+    async def on_qq_platform_loaded(self):
+        self._install_qq_mention_compat()
 
-    @filter.on_plugin_loaded()
-    async def _register_qq_group_message_parser_after_plugin_load(self, _metadata=None):
-        self._ensure_qq_group_message_parser()
+    @filter.command("提及诊断")
+    @guard_errors
+    @require_group_whitelist
+    async def handle_mention_diagnostic(self, event: AstrMessageEvent, arguments: GreedyStr):
+        """只读检查成员提及字段及当前群接收范围，不查询或修改网站账户。"""
+        from botpy.message import GroupMessage
+        raw = getattr(getattr(event, "message_obj", None), "raw_message", None)
+        if event.get_platform_name() != "qq_official" or not isinstance(raw, GroupMessage):
+            yield self._reply(event, "提及诊断仅支持 QQ 官方群消息。")
+            return
+        summary = mention_summary(raw)
+        observed = getattr(event.message_obj, "_newapi_mention_diagnostic", {})
+        event_type = observed.get("event", "unknown")
+        if event_type not in ("GROUP_AT_MESSAGE_CREATE", "GROUP_MESSAGE_CREATE"):
+            event_type = "未记录"
+        targets = self._extract_at_targets(event)
+        # Limit QQ's 30 QPM endpoint across all groups. No group IDs are retained.
+        import time
+        now = time.monotonic()
+        last = getattr(self, "_qq_state_query_at", float("-inf"))
+        if now - last < 3:
+            mode = "暂未查询（诊断间隔至少 3 秒）"
+        else:
+            self._qq_state_query_at = now
+            mode = await query_group_receive_mode(event)
+        lines = [
+            "QQ 成员提及诊断（只读）",
+            f"事件类型：{event_type}",
+            f"原始 mentions 字段：{'存在' if summary['raw_mentions_present'] else '缺失'}",
+            f"原始 mentions 数：{summary['raw_mentions_count']}",
+            f"SDK mentions 数：{summary['sdk_mentions_count']}",
+            f"正文提及标记数：{summary['content_markup_count']}",
+            f"可用成员身份数：{summary['raw_member_count']}",
+            f"补入成员 At 数：{observed.get('member_at_added', 0)}",
+            f"最终目标数：{len(targets)}",
+            f"群接收模式：{mode}",
+        ]
+        if len(targets) == 1:
+            lines.append("已识别一个目标；本次未查询或修改网站余额。")
+        elif len(targets) > 1:
+            lines.append("识别到多个目标；单账号命令会拒绝执行。")
+        elif summary['content_markup_count']:
+            lines.append("存在正文标记但缺少可确认的成员映射，需要继续检查格式；未猜测目标。")
+        elif not summary['raw_available']:
+            lines.append("SDK 未保留原始事件，不能据此判断 QQ 是否下发成员身份。")
+        else:
+            lines.append("此条消息未提供可用目标。若确实选择了成员 @，需要核查 QQ 下发数据。")
+        lines.append("接收模式 all 只表示接收范围，不保证成员提及完整。")
+        yield self._reply(event, "\n".join(lines))
 
     async def terminate(self):
-        """插件被禁用或重载时调用，清空 KV 绑定缓存。"""
+        """Remove owned instance hooks and clear the binding cache on unload."""
+        compat = getattr(self, "_qq_compat", None)
+        if compat is not None:
+            compat.close()
+            self._qq_compat = None
         await self.delete_kv_data("binding_cache")
         logger.info("[NewAPI Suite] KV 绑定缓存已清空。")
 

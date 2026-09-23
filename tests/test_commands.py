@@ -398,45 +398,52 @@ class CommandTests(unittest.IsolatedAsyncioTestCase):
         event.message_obj.raw_message = {"mentions": [{"id": "B" * 32}]}
         self.assertEqual(self.plugin._extract_at_targets(event), ["qq:70001"])
 
-    async def test_register_new_qq_group_message_parser_in_live_state(self):
-        parser = lambda payload: payload
-        state = SimpleNamespace(parsers={}, parse_group_message_create=parser)
-        client = SimpleNamespace(_connection=SimpleNamespace(state=state))
-        platform = SimpleNamespace(get_client=lambda: client)
-        self.plugin.context = SimpleNamespace(
-            platform_manager=SimpleNamespace(get_insts=lambda: [platform])
-        )
-        self.plugin._ensure_qq_group_message_parser()
-        self.assertIs(state.parsers["group_message_create"], parser)
+    async def test_normalized_numeric_openid_retains_namespace_and_leading_zeroes(self):
+        from compat_plugin.qq_compat import normalize_members
+        identity = "0" * 31 + "1"
+        await self.seed_openid(identity, 13)
+        event = await self.official_event(" 查余额 ", [{"member_openid": identity}])
+        normalize_members(event.message_obj)
+        self.assertEqual(self.plugin._extract_at_targets(event), ["openid:" + identity])
+        reply = await self.collect(self.plugin.handle_query_other_balance, event)
+        self.assertIn("13", reply)
+        self.assertEqual(self.quota_calls, [])
 
-    async def test_defer_new_qq_group_message_parser_until_client_login(self):
-        parser = lambda payload: payload
-        state = SimpleNamespace(parsers={}, parse_group_message_create=parser)
-        client = SimpleNamespace(_connection=None)
+    async def test_diagnostic_has_no_account_api_or_identity_output(self):
+        event = await self.official_event(" 提及诊断 ", [{"id": "B" * 32}])
+        with patch("compat_plugin.main.query_group_receive_mode", AsyncMock(return_value="all（接收所有消息）")) as state_query:
+            reply = await self.collect(self.plugin.handle_mention_diagnostic, event, "")
+            self.assertIn("最终目标数：1", reply)
+            self.assertIn("all", reply)
+            self.assertNotIn("A" * 32, reply)
+            self.assertNotIn("B" * 32, reply)
+            state_query.assert_awaited_once()
+        self.core.api_request.assert_not_awaited()
+        self.assertEqual(self.quota_calls, [])
 
-        async def bot_login(token):
-            client._connection = SimpleNamespace(state=state)
+    async def test_diagnostic_missing_mentions_is_not_treated_as_full_mode_failure(self):
+        event = await self.official_event(" 提及诊断 ", [])
+        event.message_obj.raw_message.raw_data.pop("mentions")
+        with patch("compat_plugin.main.query_group_receive_mode", AsyncMock(return_value="无法查询（11253）")):
+            reply = await self.collect(self.plugin.handle_mention_diagnostic, event, "")
+            self.assertIn("原始 mentions 字段：缺失", reply)
+            self.assertIn("最终目标数：0", reply)
+            self.assertIn("11253", reply)
+        self.core.api_request.assert_not_awaited()
 
-        client._bot_login = bot_login
-        platform = SimpleNamespace(get_client=lambda: client)
-        self.plugin.context = SimpleNamespace(
-            platform_manager=SimpleNamespace(get_insts=lambda: [platform])
-        )
-        self.plugin._ensure_qq_group_message_parser()
-        self.assertNotIn("group_message_create", state.parsers)
-        await client._bot_login("synthetic-token")
-        self.assertIs(state.parsers["group_message_create"], parser)
+    async def test_diagnostic_rate_limits_group_state_api(self):
+        event = await self.official_event(" 提及诊断 ", [])
+        with patch("compat_plugin.main.query_group_receive_mode", AsyncMock(return_value="all")) as query:
+            await self.collect(self.plugin.handle_mention_diagnostic, event, "")
+            second = await self.collect(self.plugin.handle_mention_diagnostic, event, "")
+            query.assert_awaited_once()
+            self.assertIn("间隔至少 3 秒", second)
+        self.core.api_request.assert_not_awaited()
 
-        from astrbot.core.platform.sources.qqofficial.qqofficial_platform_adapter import (
-            PatchedGroupMessage,
-        )
-        payload = {
-            "id": "synthetic", "group_openid": "group",
-            "author": {"member_openid": "A" * 32},
-            "content": "打劫", "mentions": [{"id": "B" * 32}],
-        }
-        message = PatchedGroupMessage(None, "event", payload)
-        self.assertEqual(official_mention_ids(message, "qq_official"), ["B" * 32])
+    async def test_non_qq_platform_raw_mentions_are_ignored(self):
+        event = FakeEvent(platform="slack")
+        event.message_obj.raw_message = {"mentions": [{"id": "B" * 32}]}
+        self.assertEqual(self.plugin._extract_at_targets(event), [])
 
 
 if __name__ == "__main__":
