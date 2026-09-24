@@ -420,7 +420,7 @@ class PkCommandHandlerTests(unittest.IsolatedAsyncioTestCase):
         plain = "".join(getattr(c, "text", "") for c in result.chain)
         self.assertIn("PK 结算", plain)
         self.assertIn("<@OPENID_13> <@OPENID_26> ", plain)
-        self.assertIn("结算时间：2026-09-24 15:38:22.123", plain)
+        self.assertIn("结算毫秒时间戳：2026-09-24 15:38:22.123｜尾数 3（单数）", plain)
         self.plugin.pk_handler.create_challenge = AsyncMock(
             return_value=("AUTO_ACCEPT_FAILED_REFUNDED", {"challenger_site": 13}))
         replies = await self.collect(self.plugin.handle_pk_command(event, **params))
@@ -446,7 +446,7 @@ class PkCommandHandlerTests(unittest.IsolatedAsyncioTestCase):
                 plain = "".join(getattr(c, "text", "") for c in result.chain)
                 self.assertIn("<@OPENID_13> <@OPENID_26> ", plain)
                 self.assertIn("PK 结算", plain)
-                self.assertIn("结算时间：2026-09-24 15:38:22.123", plain)
+                self.assertIn("结算毫秒时间戳：2026-09-24 15:38:22.123｜尾数 3（单数）", plain)
                 self.assertIn("网站ID 13（胜）→ 600", plain)
                 self.assertIn("网站ID 26（负）→ 400", plain)
 
