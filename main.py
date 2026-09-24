@@ -530,6 +530,41 @@ class NewApiSuitePlugin(Star):
         )
         yield self._reply(event, reply)
 
+    @staticmethod
+    def _mask_email(email: str) -> str:
+        """打码邮箱本地名，避免在群里泄露完整邮箱地址。"""
+        text = str(email or "").strip()
+        if not text or "@" not in text:
+            return text
+        local, domain = text.rsplit("@", 1)
+        masked = (local[0] + "***") if len(local) > 1 else "***"
+        return f"{masked}@{domain}"
+
+    @filter.command("查ID", alias={"查用户", "用户ID"})
+    @guard_errors
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    async def handle_search_user(self, event: AstrMessageEvent, arguments: GreedyStr):
+        """(管理员) 按 NewAPI 用户名或绑定邮箱查询用户 ID。"""
+        keyword = str(arguments or "").strip()
+        if not keyword:
+            yield self._reply(event, self.t("search.usage"))
+            return
+        users = await self.core.search_api_users(keyword)
+        if users is None:
+            yield self._reply(event, self.t("search.failed"))
+            return
+        if not users:
+            yield self._reply(event, self.t("search.not_found", keyword=keyword))
+            return
+        lines = [self.t("search.header", keyword=keyword)]
+        for user in users:
+            lines.append(self.t(
+                "search.line", user_id=user["user_id"],
+                username=user.get("username") or "-",
+                email=self._mask_email(user.get("email") or ""),
+            ))
+        yield self._reply(event, "\n".join(lines))
+
     @filter.command("查询余额")
     @guard_errors
     @require_group_whitelist

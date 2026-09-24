@@ -30,6 +30,7 @@ _TRANSLATIONS = {
             "签到 —— 每日签到领额度\n"
             "查余额 网站ID（管理员）—— 查他人余额\n"
             "查询 网站ID/QQ/OpenID（管理员）—— 查绑定\n"
+            "查ID 用户名/邮箱（管理员）—— 查网站用户ID\n"
             "调整余额 网站ID 金额（管理员）—— 正数加/负数减\n"
             "解绑 网站ID（管理员）\n"
             "\n【娱乐】\n"
@@ -89,10 +90,15 @@ _TRANSLATIONS = {
         "unbind.not_found": "❌ 操作无效：未找到网站ID {site_id} 的绑定记录。",
         "unbind.failed": "❌ 操作失败：在为网站ID {site_id} 执行净化时发生未知错误，请检查后台日志。",
         # 查询（管理员）
-        "lookup.website": "✅ 查询成功！输入的是【网站ID】\n--------------------\n网站ID: {site_id}\n已绑定至QQ: {qq}\n绑定时间: {time}",
-        "lookup.qq": "✅ 查询成功！输入的是【QQ号】\n--------------------\nQQ号: {qq}\n已绑定至网站ID: {site_id}\n绑定时间: {time}",
+        "lookup.website": "✅ 查询成功！输入的是【网站ID】\n--------------------\n网站ID: {site_id}\n已绑定至QQ: {qq}\n绑定时间: {time}",        "lookup.qq": "✅ 查询成功！输入的是【QQ号】\n--------------------\nQQ号: {qq}\n已绑定至网站ID: {site_id}\n绑定时间: {time}",
         "lookup.not_found": "❌ 查询失败：未在绑定记录中找到与 {id} 相关的任何信息。",
         "lookup.openid_extra": "\n🔗 另有 OpenID 绑定（官机）：{openid}",
+        # 查ID（管理员，按用户名/邮箱搜索网站用户）
+        "search.usage": "用法：查ID 用户名或邮箱\n例如：查ID 张三 或 查ID zhangsan@example.com",
+        "search.header": "🔍 按「{keyword}」查到的网站用户（最多 5 条）：",
+        "search.line": "ID: {user_id}｜用户名: {username}｜邮箱: {email}",
+        "search.not_found": "❌ 没有找到与「{keyword}」匹配的用户。",
+        "search.failed": "❌ 用户搜索接口调用失败，请稍后再试或联系管理员。",
         # 调整余额
         "adjust.success_inc": "✅ 操作成功！\n--------------------\n目标用户ID: {site_id}\n已为其增加显示额度: {amount}\n该用户当前总显示额度为: {total}",
         "adjust.success_dec": "✅ 操作成功！\n--------------------\n目标用户ID: {site_id}\n已为其减少显示额度: {amount}\n该用户当前总显示额度为: {total}",
@@ -235,6 +241,7 @@ _TRANSLATIONS = {
             "签到 — daily check-in quota\n"
             "查余额 <website ID> (admin) — others' balance\n"
             "查询 <website ID/QQ/OpenID> (admin) — bindings\n"
+            "查ID <username/email> (admin) — find website user ID\n"
             "调整余额 <website ID> <amount> (admin) — add/subtract\n"
             "解绑 <website ID> (admin)\n"
             "\n[Fun]\n"
@@ -292,6 +299,12 @@ _TRANSLATIONS = {
         "lookup.qq": "✅ Found! Input was a [QQ]\n--------------------\nQQ: {qq}\nBound to website ID: {site_id}\nBound at: {time}",
         "lookup.not_found": "❌ Query failed: no binding record found for {id}.",
         "lookup.openid_extra": "\n🔗 Also bound via OpenID (official bot): {openid}",
+        # Search by username/email (admin)
+        "search.usage": "Usage: 查ID <username or email>\ne.g. 查ID zhangsan or 查ID zhangsan@example.com",
+        "search.header": "🔍 Users matching \"{keyword}\" (up to 5):",
+        "search.line": "ID: {user_id} | username: {username} | email: {email}",
+        "search.not_found": "❌ No user matches \"{keyword}\".",
+        "search.failed": "❌ User search API failed. Please retry later or contact the admin.",
         "adjust.success_inc": "✅ Success!\n--------------------\nTarget user ID: {site_id}\nIncreased display quota by: {amount}\nCurrent total display quota: {total}",
         "adjust.success_dec": "✅ Success!\n--------------------\nTarget user ID: {site_id}\nDecreased display quota by: {amount}\nCurrent total display quota: {total}",
         "adjust.not_found": "❌ Failed: no user found for {id}.",
@@ -456,6 +469,7 @@ _ERROR_KEYS = frozenset({
     "check_in.unknown",
     "query_balance.failed",
     "query_other.failed",
+    "search.failed",
     "adjust.fetch_failed",
     "adjust.update_failed",
     "heist.api_error",

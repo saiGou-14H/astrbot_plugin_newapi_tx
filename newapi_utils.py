@@ -1066,6 +1066,51 @@ class NewApiCore:
             return response.get("data")
         return None
 
+    async def search_api_users(self, keyword, limit: int = 5) -> Optional[list]:
+        """按用户名或绑定邮箱模糊搜索用户（管理员接口）。
+
+        依次尝试 /api/user/search?keyword=、/api/user/?username=、/api/user/?email=，
+        本地按用户名/邮箱子串过滤并去重，返回最多 limit 条
+        [{"user_id", "username", "email"}]；接口失败或未命中返回 None。
+        """
+        from urllib.parse import quote
+        kw = str(keyword or "").strip()
+        if not kw:
+            return None
+        needle = kw.lower()
+        endpoints = (
+            f"/api/user/search?keyword={quote(kw)}&page=0&page_size=20",
+            f"/api/user/?page=0&page_size=20&username={quote(kw)}",
+            f"/api/user/?page=0&page_size=20&email={quote(kw)}",
+        )
+        seen = {}
+        for endpoint in endpoints:
+            try:
+                response = await self.api_request("GET", endpoint)
+            except Exception as e:
+                logger.warning(f"[NewAPI Utils] 用户搜索请求失败: {e}")
+                response = None
+            if not response or not response.get("success"):
+                continue
+            data = response.get("data") or {}
+            items = data.get("items") if isinstance(data, dict) else data
+            if isinstance(items, dict):
+                items = items.get("items") or []
+            for item in items or []:
+                user_id = item.get("id")
+                if user_id is None or user_id in seen:
+                    continue
+                username = str(item.get("username") or "")
+                email = str(item.get("email") or "")
+                if needle not in username.lower() and needle not in email.lower():
+                    continue
+                seen[user_id] = {"user_id": user_id, "username": username, "email": email}
+                if len(seen) >= limit:
+                    break
+            if len(seen) >= limit:
+                break
+        return list(seen.values())[:limit] or None
+
     async def _http_request_json(self, method: str, url: str, headers: Dict[str, str],
                                  json_data: Optional[Dict] = None) -> Optional[Dict]:
         """发送 HTTP 请求并解析 JSON；非 2xx 或异常返回 None（供自定义鉴权头请求复用）。"""
