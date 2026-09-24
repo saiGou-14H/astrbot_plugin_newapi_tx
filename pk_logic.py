@@ -98,10 +98,10 @@ class PkLogic:
         return int(round(raw)), "VALID"
 
     @staticmethod
-    def _ms_last_digit(now: datetime) -> int:
-        """当前毫秒的最后一位（按规范：单数挑战者胜，双数应战者胜）。"""
-        millis = int(round(now.timestamp() * 1000))
-        return millis % 10
+    def _timestamp_digit(timestamp_str: str) -> int:
+        """时间戳所有数字求和后取尾数（个位）。"""
+        total = sum(int(ch) for ch in timestamp_str if ch.isdigit())
+        return total % 10
 
     async def _refund(self, site_id: int, raw: int, reason: str) -> bool:
         ok = await self.core.manage_user_quota(site_id, "add", raw)
@@ -343,7 +343,10 @@ class PkLogic:
             )
             return "ACCEPT_DEDUCT_FAILED", {}
 
-        digit = self._ms_last_digit(self._now())
+        settled_time = datetime.fromtimestamp(self._now_fn()).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        digit_parts = [ch for ch in settled_time if ch.isdigit()]
+        digit_sum = sum(int(ch) for ch in digit_parts)
+        digit = digit_sum % 10
         challenger_wins = digit % 2 == 1
         winner_site = challenger_site if challenger_wins else opponent_site
         loser_site = opponent_site if challenger_wins else challenger_site
@@ -362,7 +365,6 @@ class PkLogic:
         loser_data = await self.core.get_api_user_data(loser_site)
         winner_balance = (winner_data.get("quota") / ratio) if winner_data else None
         loser_balance = (loser_data.get("quota") / ratio) if loser_data else None
-        settled_time = datetime.fromtimestamp(self._now_fn()).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         return "SETTLED", {
             "match_id": match_id,
             "challenger_site": challenger_site,
@@ -373,6 +375,8 @@ class PkLogic:
             "stake_display": stake_raw / ratio,
             "pot_display": pot_raw / ratio,
             "digit": digit,
+            "digit_sum": digit_sum,
+            "digit_expression": "+".join(digit_parts),
             "challenger_wins": challenger_wins,
             "winner_balance": winner_balance,
             "loser_balance": loser_balance,

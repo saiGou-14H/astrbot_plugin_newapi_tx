@@ -6,6 +6,7 @@ replaced by an in-memory balance ledger so no HTTP or quota mutation occurs.
 """
 import asyncio
 import importlib.util
+from datetime import datetime
 import json
 from pathlib import Path
 import sys
@@ -161,12 +162,16 @@ class PkLogicTests(unittest.IsolatedAsyncioTestCase):
         self.balances[CHALLENGER_SITE] = 50000
         self.balances[OPPONENT_SITE] = 50000
         await self.pk.create_challenge("qq:70001", "26", 100.0)
-        self.pk._now_fn = lambda: 1000.123  # ms digit 3 → challenger wins
+        self.pk._now_fn = lambda: 1000.124  # 数字和尾数 5 → challenger wins
         status, details = await self.pk.accept_challenge("qq:80001", "13")
         self.assertEqual(status, "SETTLED")
+        expected_ts = datetime.fromtimestamp(1000.124).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        expected_digit = PkLogic._timestamp_digit(expected_ts)
+        self.assertEqual(details["digit"], expected_digit)
+        self.assertEqual(details["digit"] % 2, 1)
+        self.assertEqual(details["digit_sum"], sum(int(c) for c in expected_ts if c.isdigit()))
         self.assertEqual(details["winner_site"], CHALLENGER_SITE)
         self.assertEqual(details["loser_site"], OPPONENT_SITE)
-        self.assertEqual(details["digit"], 3)
         self.assertTrue(details["challenger_wins"])
         # Challenger: -10000 then +20000 → +10000 net; opponent -10000.
         self.assertEqual(self.balances[CHALLENGER_SITE], 60000)
@@ -182,11 +187,14 @@ class PkLogicTests(unittest.IsolatedAsyncioTestCase):
         self.balances[CHALLENGER_SITE] = 50000
         self.balances[OPPONENT_SITE] = 50000
         await self.pk.create_challenge("qq:70001", "26", 100.0)
-        self.pk._now_fn = lambda: 1000.456  # ms digit 6 → opponent wins
+        self.pk._now_fn = lambda: 1000.123  # 数字和尾数 4 → opponent wins
         status, details = await self.pk.accept_challenge("qq:80001", "13")
         self.assertEqual(status, "SETTLED")
+        expected_ts = datetime.fromtimestamp(1000.123).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+        expected_digit = PkLogic._timestamp_digit(expected_ts)
+        self.assertEqual(details["digit"], expected_digit)
+        self.assertEqual(details["digit"] % 2, 0)
         self.assertEqual(details["winner_site"], OPPONENT_SITE)
-        self.assertEqual(details["digit"], 6)
         self.assertFalse(details["challenger_wins"])
         self.assertEqual(self.balances[CHALLENGER_SITE], 40000)
         self.assertEqual(self.balances[OPPONENT_SITE], 60000)
@@ -235,7 +243,7 @@ class PkLogicTests(unittest.IsolatedAsyncioTestCase):
         self.balances[CHALLENGER_SITE] = 50000
         self.balances[OPPONENT_SITE] = 50000
         await self.pk.create_challenge("qq:70001", "26", 100.0)
-        self.pk._now_fn = lambda: 1000.123
+        self.pk._now_fn = lambda: 1000.124
         results = await asyncio.gather(
             self.pk.accept_challenge("qq:80001", "13"),
             self.pk.accept_challenge("qq:80001", "13"),
@@ -251,11 +259,11 @@ class PkLogicTests(unittest.IsolatedAsyncioTestCase):
         self.balances[CHALLENGER_SITE] = 50000
         self.balances[OPPONENT_SITE] = 50000
         await self.pk.create_challenge("qq:70001", "26", 100.0)
-        self.pk._now_fn = lambda: 1000.123
+        self.pk._now_fn = lambda: 1000.124
         original = self.core.manage_user_quota
 
         async def flaky(site, action, value):
-            if site == CHALLENGER_SITE and action == "add" and value == 20000:
+            if action == "add" and value == 20000:
                 return False  # only the winner payout fails; refunds must succeed
             return await original(site, action, value)
 
@@ -286,7 +294,7 @@ class PkLogicTests(unittest.IsolatedAsyncioTestCase):
         await self.seed_admin()
         self.balances[CHALLENGER_SITE] = 50000
         self.balances[1] = 50000
-        self.pk._now_fn = lambda: 1000.123  # odd → challenger wins
+        self.pk._now_fn = lambda: 1000.124  # 数字和尾数 5（单数）→ challenger wins
         status, details = await self.pk.create_challenge("qq:70001", "1", 100.0)
         self.assertEqual(status, "AUTO_SETTLED")
         self.assertEqual(details["winner_site"], CHALLENGER_SITE)
@@ -318,6 +326,12 @@ class PkLogicTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status, "CREATED")
         self.assertEqual(details["opponent_site"], 1)
         self.assertEqual((await self.pending_rows())[0]["status"], "PENDING")
+
+
+    def test_timestamp_digit_sums_all_digits(self):
+        self.assertEqual(PkLogic._timestamp_digit("2026-09-24 16:39:56.283"), 8)
+        self.assertEqual(PkLogic._timestamp_digit("1970-01-01 08:16:40.124"), 5)
+        self.assertEqual(PkLogic._timestamp_digit("0000-00-00 00:00:00.000"), 0)
 
 
 class PkCommandHandlerTests(unittest.IsolatedAsyncioTestCase):
@@ -356,8 +370,10 @@ class PkCommandHandlerTests(unittest.IsolatedAsyncioTestCase):
         settled = {"challenger_site": 13, "opponent_site": 26,
                    "winner_site": 13, "loser_site": 26, "stake_raw": 10000,
                    "pot_display": 200.0, "digit": 3, "challenger_wins": True,
+                   "digit_sum": 53,
+                   "digit_expression": "2+0+2+6+0+9+2+4+1+5+3+8+2+2+1+2+4",
                    "winner_balance": 600.0, "loser_balance": 400.0,
-                   "settled_time": "2026-09-24 15:38:22.123"}
+                   "settled_time": "2026-09-24 15:38:22.124"}
         self.plugin.pk_handler = SimpleNamespace(
             create_challenge=AsyncMock(return_value=("CREATED", created)),
             accept_challenge=AsyncMock(return_value=("SETTLED", settled)),
@@ -409,8 +425,10 @@ class PkCommandHandlerTests(unittest.IsolatedAsyncioTestCase):
         settled = {"challenger_site": 13, "opponent_site": 26,
                    "winner_site": 13, "loser_site": 26, "stake_raw": 10000,
                    "pot_display": 200.0, "digit": 3, "challenger_wins": True,
+                   "digit_sum": 53,
+                   "digit_expression": "2+0+2+6+0+9+2+4+1+5+3+8+2+2+1+2+4",
                    "winner_balance": 600.0, "loser_balance": 400.0,
-                   "settled_time": "2026-09-24 15:38:22.123"}
+                   "settled_time": "2026-09-24 15:38:22.124"}
         self.plugin.pk_handler.create_challenge = AsyncMock(
             return_value=("AUTO_SETTLED", settled))
         event = await self.event("PK 26 100")
@@ -420,7 +438,7 @@ class PkCommandHandlerTests(unittest.IsolatedAsyncioTestCase):
         plain = "".join(getattr(c, "text", "") for c in result.chain)
         self.assertIn("PK 结算", plain)
         self.assertIn("<@OPENID_13> <@OPENID_26> ", plain)
-        self.assertIn("结算毫秒时间戳：2026-09-24 15:38:22.123｜尾数 3（单数）", plain)
+        self.assertIn("🧮 计算过程：2+0+2+6+0+9+2+4+1+5+3+8+2+2+1+2+4 = 53 → 尾数 3（单数）", plain)
         self.plugin.pk_handler.create_challenge = AsyncMock(
             return_value=("AUTO_ACCEPT_FAILED_REFUNDED", {"challenger_site": 13}))
         replies = await self.collect(self.plugin.handle_pk_command(event, **params))
@@ -446,7 +464,8 @@ class PkCommandHandlerTests(unittest.IsolatedAsyncioTestCase):
                 plain = "".join(getattr(c, "text", "") for c in result.chain)
                 self.assertIn("<@OPENID_13> <@OPENID_26> ", plain)
                 self.assertIn("PK 结算", plain)
-                self.assertIn("结算毫秒时间戳：2026-09-24 15:38:22.123｜尾数 3（单数）", plain)
+                self.assertIn("结算毫秒时间戳：2026-09-24 15:38:22.124", plain)
+                self.assertIn("🧮 计算过程：2+0+2+6+0+9+2+4+1+5+3+8+2+2+1+2+4 = 53 → 尾数 3（单数）", plain)
                 self.assertIn("网站ID 13（胜）→ 600", plain)
                 self.assertIn("网站ID 26（负）→ 400", plain)
 

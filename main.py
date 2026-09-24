@@ -225,12 +225,14 @@ class NewApiSuitePlugin(Star):
             return str(value)
 
     def _pk_settled_reply(self, details) -> str:
-        """组装 PK 结算文案（含毫秒时间与双方余额）。"""
+        """组装 PK 结算文案（含毫秒时间戳、计算过程与双方余额）。"""
         parity = self.t("pk.parity_odd" if details['challenger_wins'] else "pk.parity_even")
         winner_balance = details.get('winner_balance')
         loser_balance = details.get('loser_balance')
         return self.t("pk.settled", digit=details['digit'], parity=parity,
                       time=details.get('settled_time', ''),
+                      expression=details.get('digit_expression', ''),
+                      digit_sum=details.get('digit_sum', ''),
                       winner=details['winner_site'], loser=details['loser_site'],
                       pot=self._fmt_quota(details['pot_display']),
                       winner_balance=(self._fmt_quota(winner_balance)

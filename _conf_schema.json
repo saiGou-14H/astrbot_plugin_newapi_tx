@@ -139,7 +139,7 @@
         "description": "【娱乐功能】PK 挑战设置",
         "type": "object",
         "items": {
-            "enabled": { "description": "是否启用 PK 功能（发起挑战即扣除押注，对方应战时扣除同等押注；结算毫秒尾数单数=挑战者胜、双数=应战者胜，胜者获得双方押注之和）", "type": "bool", "default": true },
+            "enabled": { "description": "是否启用 PK 功能（发起挑战即扣除押注，对方应战时扣除同等押注；结算按毫秒时间戳全部数字求和取尾数，单数=挑战者胜、双数=应战者胜，胜者获得双方押注之和）", "type": "bool", "default": true },
             "expiry_seconds": { "description": "挑战保留时间（秒），超时未应战自动结束并退还发起人押金（范围 30–86400，默认 300 即 5 分钟）", "type": "int", "default": 300 },
             "auto_accept_admin_site": { "description": "自动应战的管理员网站ID：用户向该网站ID发起 PK 时立即自动应战并结算；填 0 关闭自动应战", "type": "int", "default": 1 }
         }
