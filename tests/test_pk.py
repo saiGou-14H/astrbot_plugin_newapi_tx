@@ -1,0 +1,368 @@
+"""Offline regression for the PK feature (no real quota or binding writes).
+
+Uses the real NewApiCore SQLite path against an in-memory database, real
+bindings lookups and the real PK state machine; New API money operations are
+replaced by an in-memory balance ledger so no HTTP or quota mutation occurs.
+"""
+import asyncio
+import importlib.util
+import json
+from pathlib import Path
+import sys
+import unittest
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
+
+import aiosqlite
+import httpx
+from astrbot.api import AstrBotConfig
+from astrbot.api.message_components import At
+from astrbot.core.platform.message_type import MessageType
+from astrbot.core.platform.sources.qqofficial.qqofficial_platform_adapter import (
+    PatchedGroupMessage, QQOfficialPlatformAdapter,
+)
+from astrbot.core.star.filter.command import CommandFilter
+
+if "compat_plugin" not in sys.modules:
+    root = Path(__file__).resolve().parents[1]
+    spec = importlib.util.spec_from_file_location(
+        "compat_plugin", root / "__init__.py", submodule_search_locations=[str(root)],
+    )
+    if spec is None or spec.loader is None:
+        raise ImportError("Cannot locate compat_plugin")
+    sys.modules["compat_plugin"] = importlib.util.module_from_spec(spec)
+
+from compat_plugin.newapi_utils import NewApiCore
+from compat_plugin.pk_logic import PkLogic
+from compat_plugin.main import NewApiSuitePlugin
+
+SENDER = "PK_SENDER_PRIVATE_SENTINEL"
+SENDER2 = "PK_SENDER2_PRIVATE_SENTINEL"
+GROUP = "PK_GROUP_PRIVATE_SENTINEL"
+CHALLENGER_SITE = 13
+OPPONENT_SITE = 26
+
+
+class PkLogicTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        config = AstrBotConfig.__new__(AstrBotConfig)
+        config.update({
+            "binding_settings": {"quota_display_ratio": 100},
+            "pk_settings": {"enabled": True, "expiry_seconds": 300},
+        })
+        self.config = config
+        self.core = NewApiCore(config)
+        self.connection = await aiosqlite.connect(":memory:")
+        self.addAsyncCleanup(self.connection.close)
+        self.connection.row_factory = aiosqlite.Row
+        self.core.db_mode = "sqlite"
+        self.core.db_conn = self.connection
+        for ddl in NewApiCore._TRANSFER_SQLITE_DDL.values():
+            await self.connection.execute(ddl)
+        await self.connection.commit()
+
+        guard = patch.object(
+            httpx.AsyncClient, "request", new_callable=AsyncMock,
+            side_effect=AssertionError("Real HTTP is forbidden in PK tests"),
+        )
+        self.blocked_http = guard.start()
+        self.addCleanup(guard.stop)
+        self.addCleanup(self.blocked_http.assert_not_awaited)
+
+        # In-memory money ledger replaces every New API quota call.
+        self.balances = {CHALLENGER_SITE: 0, OPPONENT_SITE: 0}
+        self.quota_calls = []
+
+        async def get_api_user_data(site):
+            return {"id": site, "quota": self.balances.get(site, 0)}
+
+        async def manage_user_quota(site, action, value):
+            self.quota_calls.append((site, action, value))
+            current = self.balances.get(site, 0)
+            if action == "subtract":
+                if value > current:
+                    return False
+                self.balances[site] = current - value
+            elif action == "add":
+                self.balances[site] = current + value
+            else:
+                return False
+            return True
+
+        self.core.get_api_user_data = AsyncMock(side_effect=get_api_user_data)
+        self.core.manage_user_quota = AsyncMock(side_effect=manage_user_quota)
+        self.pk = PkLogic(self.config, self.core)
+        self.pk._now_fn = lambda: 1000.0
+
+    async def seed(self):
+        await self.connection.execute(
+            "INSERT INTO newapi_bindings (qq_id, website_user_id) VALUES (?, ?)",
+            (70001, CHALLENGER_SITE))
+        await self.connection.execute(
+            "INSERT INTO newapi_bindings (qq_id, website_user_id) VALUES (?, ?)",
+            (80001, OPPONENT_SITE))
+        await self.connection.commit()
+
+    async def pending_rows(self):
+        cur = await self.connection.execute(
+            "SELECT id, status, challenger_site, opponent_site, stake_raw, "
+            "expires_at, winner_site, final_ms_digit FROM newapi_pk_matches")
+        return [dict(row) for row in await cur.fetchall()]
+
+    async def test_create_deducts_stake_and_persists_pending(self):
+        await self.seed()
+        self.balances[CHALLENGER_SITE] = 50000
+        status, details = await self.pk.create_challenge("qq:70001", "26", 100.0)
+        self.assertEqual(status, "CREATED")
+        self.assertEqual(details["challenger_site"], CHALLENGER_SITE)
+        self.assertEqual(details["opponent_site"], OPPONENT_SITE)
+        self.assertEqual(details["stake_raw"], 10000)
+        self.assertEqual(self.balances[CHALLENGER_SITE], 40000)
+        rows = await self.pending_rows()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["status"], "PENDING")
+        self.assertEqual(rows[0]["stake_raw"], 10000)
+
+    async def test_insufficient_balance_prompts_without_deduct_or_row(self):
+        await self.seed()
+        self.balances[CHALLENGER_SITE] = 5000
+        status, details = await self.pk.create_challenge("qq:70001", "26", 100.0)
+        self.assertEqual(status, "INSUFFICIENT_BALANCE")
+        self.assertEqual(self.balances[CHALLENGER_SITE], 5000)
+        self.assertEqual(await self.pending_rows(), [])
+        self.core.manage_user_quota.assert_not_awaited()
+
+    async def test_invalid_amounts_are_rejected(self):
+        await self.seed()
+        for bad in (0, -1, 0.0, "abc", float("inf"), float("nan"), None):
+            with self.subTest(amount=bad):
+                status, _ = await self.pk.create_challenge("qq:70001", "26", bad)
+                self.assertEqual(status, "INVALID_AMOUNT")
+        self.assertEqual(await self.pending_rows(), [])
+
+    async def test_self_challenge_missing_target_and_disabled(self):
+        await self.seed()
+        self.assertEqual((await self.pk.create_challenge("qq:70001", "13", 1))[0], "CANNOT_PK_SELF")
+        self.assertEqual((await self.pk.create_challenge("qq:70001", "999", 1))[0], "TARGET_NOT_FOUND")
+        self.config["pk_settings"]["enabled"] = False
+        self.assertEqual((await self.pk.create_challenge("qq:70001", "26", 1))[0], "DISABLED")
+
+    async def test_duplicate_pending_between_pair_is_rejected(self):
+        await self.seed()
+        self.balances[CHALLENGER_SITE] = 50000
+        self.assertEqual((await self.pk.create_challenge("qq:70001", "26", 100))[0], "CREATED")
+        self.assertEqual((await self.pk.create_challenge("qq:70001", "26", 100))[0], "ALREADY_PENDING")
+        self.assertEqual((await self.pk.create_challenge("qq:80001", "13", 100))[0], "ALREADY_PENDING")
+        self.assertEqual(self.balances[CHALLENGER_SITE], 40000)
+
+    async def test_odd_digit_settles_for_challenger(self):
+        await self.seed()
+        self.balances[CHALLENGER_SITE] = 50000
+        self.balances[OPPONENT_SITE] = 50000
+        await self.pk.create_challenge("qq:70001", "26", 100.0)
+        self.pk._now_fn = lambda: 1000.123  # ms digit 3 → challenger wins
+        status, details = await self.pk.accept_challenge("qq:80001", "13")
+        self.assertEqual(status, "SETTLED")
+        self.assertEqual(details["winner_site"], CHALLENGER_SITE)
+        self.assertEqual(details["loser_site"], OPPONENT_SITE)
+        self.assertEqual(details["digit"], 3)
+        self.assertTrue(details["challenger_wins"])
+        # Challenger: -10000 then +20000 → +10000 net; opponent -10000.
+        self.assertEqual(self.balances[CHALLENGER_SITE], 60000)
+        self.assertEqual(self.balances[OPPONENT_SITE], 40000)
+        rows = await self.pending_rows()
+        self.assertEqual(rows[0]["status"], "SETTLED")
+        self.assertEqual(rows[0]["winner_site"], CHALLENGER_SITE)
+
+    async def test_even_digit_settles_for_opponent(self):
+        await self.seed()
+        self.balances[CHALLENGER_SITE] = 50000
+        self.balances[OPPONENT_SITE] = 50000
+        await self.pk.create_challenge("qq:70001", "26", 100.0)
+        self.pk._now_fn = lambda: 1000.456  # ms digit 6 → opponent wins
+        status, details = await self.pk.accept_challenge("qq:80001", "13")
+        self.assertEqual(status, "SETTLED")
+        self.assertEqual(details["winner_site"], OPPONENT_SITE)
+        self.assertEqual(details["digit"], 6)
+        self.assertFalse(details["challenger_wins"])
+        self.assertEqual(self.balances[CHALLENGER_SITE], 40000)
+        self.assertEqual(self.balances[OPPONENT_SITE], 60000)
+
+    async def test_expired_challenge_refunds_and_cannot_be_accepted(self):
+        await self.seed()
+        self.balances[CHALLENGER_SITE] = 50000
+        self.balances[OPPONENT_SITE] = 50000
+        await self.pk.create_challenge("qq:70001", "26", 100.0)
+        self.pk._now_fn = lambda: 1000.0 + 301  # beyond 300s expiry
+        status, _ = await self.pk.accept_challenge("qq:80001", "13")
+        self.assertEqual(status, "EXPIRED")
+        self.assertEqual(self.balances[CHALLENGER_SITE], 50000)
+        self.assertEqual(self.balances[OPPONENT_SITE], 50000)
+        self.assertEqual((await self.pending_rows())[0]["status"], "EXPIRED")
+
+    async def test_accept_insufficient_balance_keeps_challenge_pending(self):
+        await self.seed()
+        self.balances[CHALLENGER_SITE] = 50000
+        self.balances[OPPONENT_SITE] = 5000
+        await self.pk.create_challenge("qq:70001", "26", 100.0)
+        status, details = await self.pk.accept_challenge("qq:80001", "13")
+        self.assertEqual(status, "ACCEPT_INSUFFICIENT_BALANCE")
+        self.assertEqual(details["need"], 100.0)
+        self.assertEqual(self.balances[OPPONENT_SITE], 5000)
+        self.assertEqual((await self.pending_rows())[0]["status"], "PENDING")
+
+    async def test_multiple_pending_require_identifier(self):
+        await self.seed()
+        self.balances[CHALLENGER_SITE] = 50000
+        self.balances[39] = 50000
+        await self.connection.execute(
+            "INSERT INTO newapi_bindings (qq_id, website_user_id) VALUES (?, ?)",
+            (90001, 39))
+        await self.connection.commit()
+        await self.pk.create_challenge("qq:70001", "26", 100.0)
+        await self.pk.create_challenge("qq:90001", "26", 100.0)
+        status, details = await self.pk.accept_challenge("qq:80001", None)
+        self.assertEqual(status, "MULTIPLE_PENDING")
+        self.assertEqual(details["count"], 2)
+
+    async def test_concurrent_accepts_settle_exactly_once(self):
+        await self.seed()
+        self.balances[CHALLENGER_SITE] = 50000
+        self.balances[OPPONENT_SITE] = 50000
+        await self.pk.create_challenge("qq:70001", "26", 100.0)
+        self.pk._now_fn = lambda: 1000.123
+        results = await asyncio.gather(
+            self.pk.accept_challenge("qq:80001", "13"),
+            self.pk.accept_challenge("qq:80001", "13"),
+        )
+        settled = [r for r in results if r[0] == "SETTLED"]
+        self.assertEqual(len(settled), 1)
+        self.assertEqual([r[0] for r in results].count("NOT_FOUND"), 1)
+        self.assertEqual(self.balances[CHALLENGER_SITE], 60000)
+        self.assertEqual(self.balances[OPPONENT_SITE], 40000)
+
+    async def test_payout_failure_refunds_both_sides(self):
+        await self.seed()
+        self.balances[CHALLENGER_SITE] = 50000
+        self.balances[OPPONENT_SITE] = 50000
+        await self.pk.create_challenge("qq:70001", "26", 100.0)
+        self.pk._now_fn = lambda: 1000.123
+        original = self.core.manage_user_quota
+
+        async def flaky(site, action, value):
+            if site == CHALLENGER_SITE and action == "add" and value == 20000:
+                return False  # only the winner payout fails; refunds must succeed
+            return await original(site, action, value)
+
+        self.core.manage_user_quota = AsyncMock(side_effect=flaky)
+        status, _ = await self.pk.accept_challenge("qq:80001", "13")
+        self.assertEqual(status, "SETTLE_FAILED_REFUNDED")
+        self.assertEqual(self.balances[CHALLENGER_SITE], 50000)
+        self.assertEqual(self.balances[OPPONENT_SITE], 50000)
+        self.assertEqual((await self.pending_rows())[0]["status"], "REFUNDED")
+
+    async def test_insert_failure_refunds_challenger(self):
+        await self.seed()
+        self.balances[CHALLENGER_SITE] = 50000
+        self.pk._insert_match = AsyncMock(return_value=None)
+        status, _ = await self.pk.create_challenge("qq:70001", "26", 100.0)
+        self.assertEqual(status, "DB_FAILED")
+        self.assertEqual(self.balances[CHALLENGER_SITE], 50000)
+
+
+class PkCommandHandlerTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        guard = patch.object(
+            httpx.AsyncClient, "request", new_callable=AsyncMock,
+            side_effect=AssertionError("Real HTTP is forbidden"),
+        )
+        self.blocked_http = guard.start()
+        self.addCleanup(guard.stop)
+        self.addCleanup(self.blocked_http.assert_not_awaited)
+
+        self.platform = QQOfficialPlatformAdapter({
+            "id": "offline", "appid": "synthetic-app", "secret": "synthetic-secret",
+            "enable_group_c2c": True, "enable_guild_direct_message": False,
+        }, {}, asyncio.Queue())
+        self.addAsyncCleanup(self.platform.client.close)
+        config = AstrBotConfig.__new__(AstrBotConfig)
+        config.update({
+            "binding_settings": {"quota_display_ratio": 100},
+            "pk_settings": {"enabled": True, "expiry_seconds": 300},
+        })
+        self.plugin = object.__new__(NewApiSuitePlugin)
+        self.plugin.config = config
+        self.plugin.lang = "zh"
+        self.plugin._reply = lambda event, text: text
+        self.plugin.core = SimpleNamespace(
+            get_user_by_identity=AsyncMock(return_value={"website_user_id": 13}),
+        )
+        self.plugin._refresh_balance_cache = AsyncMock()
+        created = {"challenger_site": 13, "opponent_site": 26,
+                   "stake_raw": 10000, "stake_display": 100.0}
+        settled = {"challenger_site": 13, "opponent_site": 26,
+                   "winner_site": 13, "loser_site": 26, "stake_raw": 10000,
+                   "pot_display": 200.0, "digit": 3, "challenger_wins": True}
+        self.plugin.pk_handler = SimpleNamespace(
+            create_challenge=AsyncMock(return_value=("CREATED", created)),
+            accept_challenge=AsyncMock(return_value=("SETTLED", settled)),
+        )
+
+    async def event(self, text, sender=SENDER):
+        raw = PatchedGroupMessage(None, "offline-event", {
+            "id": "offline-message", "group_openid": GROUP,
+            "author": {"member_openid": sender, "username": "offline"},
+            "content": text, "attachments": [], "mentions": [],
+            "timestamp": "2026-01-01T00:00:00Z",
+        })
+        message = await QQOfficialPlatformAdapter._parse_from_qqofficial(
+            raw, MessageType.GROUP_MESSAGE)
+        message.group_id = GROUP
+        message.session_id = GROUP
+        return self.platform.create_event(message)
+
+    def parse(self, name, event, handler):
+        event.is_at_or_wake_command = True
+        command = CommandFilter(name)
+        command.init_handler_md(SimpleNamespace(handler=handler))
+        self.assertTrue(command.filter(event, self.plugin.config))
+        return event.get_extra("parsed_params")
+
+    async def collect(self, generator):
+        return [item async for item in generator]
+
+    async def test_pk_command_parses_target_and_amount(self):
+        event = await self.event("PK 26 100")
+        params = self.parse("PK", event, NewApiSuitePlugin.handle_pk_command)
+        replies = await self.collect(self.plugin.handle_pk_command(event, **params))
+        self.plugin.pk_handler.create_challenge.assert_awaited_once_with(
+            "openid:" + SENDER, "26", 100.0)
+        self.assertIn("网站ID 13 向 网站ID 26 发起 PK", replies[0])
+
+    async def test_pk_command_bad_amount_never_creates(self):
+        event = await self.event("PK 26 abc")
+        params = self.parse("PK", event, NewApiSuitePlugin.handle_pk_command)
+        replies = await self.collect(self.plugin.handle_pk_command(event, **params))
+        self.assertIn("押注金额必须是大于 0 的有效数字", replies[0])
+        self.plugin.pk_handler.create_challenge.assert_not_awaited()
+
+    async def test_pk_command_usage_without_amount(self):
+        event = await self.event("PK 26")
+        params = self.parse("PK", event, NewApiSuitePlugin.handle_pk_command)
+        replies = await self.collect(self.plugin.handle_pk_command(event, **params))
+        self.assertIn("用法", replies[0])
+        self.plugin.pk_handler.create_challenge.assert_not_awaited()
+
+    async def test_accept_pk_with_and_without_identifier(self):
+        for text, expected in (("接受PK 13", "13"), ("接受PK", None)):
+            with self.subTest(text=text):
+                event = await self.event(text)
+                params = self.parse("接受PK", event, NewApiSuitePlugin.handle_accept_pk)
+                replies = await self.collect(self.plugin.handle_accept_pk(event, **params))
+                self.plugin.pk_handler.accept_challenge.assert_awaited_with(
+                    "openid:" + SENDER, expected)
+                self.assertIn("PK 结算", replies[0])
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -18,6 +18,7 @@ from .i18n import translate
 from .config_utils import config_get
 from .qq_mentions import official_mention_ids
 from .qq_compat import QQMentionCompat, mention_summary, query_group_receive_mode
+from .pk_logic import PkLogic
 
 def load_plugin_version() -> str:
     """
@@ -126,6 +127,7 @@ class NewApiSuitePlugin(Star):
         self.config = config
         self.core = NewApiCore(config)
         self.heist_handler = HeistLogic(config, self.core)
+        self.pk_handler = PkLogic(config, self.core)
         # 回复语言：zh / en（配置 i18n_settings.language）
         self.lang = self._resolve_language()
         # 余额缓存：用户每次操作时顺手更新，排行榜直接读缓存无需查 API
@@ -213,6 +215,14 @@ class NewApiSuitePlugin(Star):
     def _reply(self, event: AstrMessageEvent, text):
         """统一回复出口：所有用户可见回复经此发出，便于按来源套用格式。"""
         return event.plain_result(self._maybe_markdown(event, text))
+
+    @staticmethod
+    def _fmt_quota(value) -> str:
+        """把显示额度格式化为最多 6 位小数的紧凑字符串。"""
+        try:
+            return f"{float(value):.6f}".rstrip('0').rstrip('.') or "0"
+        except (TypeError, ValueError):
+            return str(value)
 
     def _red_packet_official_only_blocked(self, event: AstrMessageEvent, cmd: str = "") -> bool:
         """「红包仅官机」开启且本次请求来自野机（数字 QQ 身份）时返回 True，调用方应拒绝处理。
@@ -738,6 +748,7 @@ class NewApiSuitePlugin(Star):
             "newapi_openid_bindings": "db_transfer.label_openid_bindings",
             "newapi_check_in_state": "db_transfer.label_check_in_state",
             "daily_heist_log": "db_transfer.label_heist_log",
+            "newapi_pk_matches": "db_transfer.label_pk",
         }
         return "\n".join(
             self.t("db_transfer.detail_line", label=self.t(key), count=counts.get(table, 0))
@@ -1202,6 +1213,113 @@ class NewApiSuitePlugin(Star):
             case _:
                 reply = self.t("heist.unknown")
         
+        yield self._reply(event, reply)
+
+    @filter.command("PK", alias={"pk"})
+    @guard_errors
+    @require_group_whitelist
+    @require_binding
+    async def handle_pk_command(self, event: AstrMessageEvent, arguments: GreedyStr):
+        """(娱乐) 发起 PK：PK 对方网站ID 金额。发起方立即扣款，对方 5 分钟内应战，超时自动退还。"""
+        at_target = self._extract_at_qq(event)
+        raw = str(arguments or "").strip()
+        parts = raw.split()
+        if at_target:
+            target_identifier = at_target
+            amount_text = parts[-1] if parts else ""
+        elif len(parts) >= 2:
+            target_identifier = self._resolve_target(event, parts[0])
+            amount_text = parts[1]
+        else:
+            yield self._reply(event, self.t("pk.usage"))
+            return
+        if target_identifier is None:
+            yield self._reply(event, self.t("common.at_or_id_required"))
+            return
+        try:
+            amount = float(amount_text)
+        except (TypeError, ValueError):
+            yield self._reply(event, self.t("pk.amount_invalid"))
+            return
+
+        status, details = await self.pk_handler.create_challenge(
+            self._sender_identity(event), target_identifier, amount)
+        expiry_seconds = int(config_get(self.config, 'pk_settings.expiry_seconds', 300) or 300)
+        match status:
+            case "DISABLED":
+                reply = self.t("pk.disabled")
+            case "INVALID_AMOUNT":
+                reply = self.t("pk.amount_invalid")
+            case "CHALLENGER_NOT_BOUND":
+                reply = self.t("not_bound")
+            case "TARGET_NOT_FOUND":
+                reply = self.t("pk.target_not_found", id=details['id'])
+            case "CANNOT_PK_SELF":
+                reply = self.t("pk.self")
+            case "ALREADY_PENDING":
+                reply = self.t("pk.already_pending")
+            case "INSUFFICIENT_BALANCE":
+                reply = self.t("pk.insufficient_balance",
+                               need=self._fmt_quota(details['need']),
+                               balance=self._fmt_quota(details['balance']))
+            case "DEDUCT_FAILED":
+                reply = self.t("pk.deduct_failed")
+            case "DB_FAILED":
+                reply = self.t("pk.db_failed")
+            case "CREATED":
+                reply = self.t("pk.created",
+                               challenger=details['challenger_site'],
+                               opponent=details['opponent_site'],
+                               amount=self._fmt_quota(details['stake_display']),
+                               minutes=max(1, expiry_seconds // 60))
+                await self._refresh_balance_cache(f"site:{details['challenger_site']}")
+            case _:
+                reply = self.t("common.unexpected_error", err=status)
+        yield self._reply(event, reply)
+
+    @filter.command("接受PK", alias={"接受pk", "接PK", "接pk"})
+    @guard_errors
+    @require_group_whitelist
+    @require_binding
+    async def handle_accept_pk(self, event: AstrMessageEvent, arguments: GreedyStr = ""):
+        """(娱乐) 应战 PK：接受PK [发起人网站ID]；不填则自动应战唯一一局。"""
+        at_target = self._extract_at_qq(event)
+        raw = str(arguments or "").strip()
+        if at_target:
+            identifier = at_target
+        else:
+            parts = raw.split()
+            identifier = parts[0] if parts else ""
+        status, details = await self.pk_handler.accept_challenge(
+            self._sender_identity(event), identifier or None)
+        match status:
+            case "DISABLED":
+                reply = self.t("pk.disabled")
+            case "OPPONENT_NOT_BOUND":
+                reply = self.t("not_bound")
+            case "NOT_FOUND":
+                reply = self.t("pk.accept.not_found")
+            case "EXPIRED":
+                reply = self.t("pk.accept.expired")
+            case "MULTIPLE_PENDING":
+                reply = self.t("pk.accept.multiple", count=details['count'])
+            case "ACCEPT_INSUFFICIENT_BALANCE":
+                reply = self.t("pk.accept.insufficient",
+                               need=self._fmt_quota(details['need']),
+                               balance=self._fmt_quota(details['balance']))
+            case "ACCEPT_DEDUCT_FAILED":
+                reply = self.t("pk.accept.deduct_failed")
+            case "SETTLED":
+                parity = self.t("pk.parity_odd" if details['challenger_wins'] else "pk.parity_even")
+                reply = self.t("pk.settled", digit=details['digit'], parity=parity,
+                               winner=details['winner_site'], loser=details['loser_site'],
+                               pot=self._fmt_quota(details['pot_display']))
+                await self._refresh_balance_cache(f"site:{details['winner_site']}")
+                await self._refresh_balance_cache(f"site:{details['loser_site']}")
+            case "SETTLE_FAILED_REFUNDED":
+                reply = self.t("pk.settle_failed")
+            case _:
+                reply = self.t("common.unexpected_error", err=status)
         yield self._reply(event, reply)
 
     @filter.command("榜单")

@@ -321,6 +321,23 @@ class NewApiCore:
             """)
             await self._ensure_column_mysql("newapi_red_packet_records", "grabber_name",
                                             "varchar(128) NULL DEFAULT NULL")
+            # PK 挑战表（发起/应战/结算/过期，全状态落库）
+            await self.execute_query("""
+            CREATE TABLE IF NOT EXISTS `newapi_pk_matches` (
+              `id` int(11) NOT NULL AUTO_INCREMENT,
+              `challenger_site` int(11) NOT NULL,
+              `opponent_site` int(11) NOT NULL,
+              `stake_raw` bigint(20) NOT NULL,
+              `status` varchar(24) NOT NULL DEFAULT 'PENDING',
+              `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              `expires_at` timestamp NULL DEFAULT NULL,
+              `settled_at` timestamp NULL DEFAULT NULL,
+              `winner_site` int(11) NULL DEFAULT NULL,
+              `final_ms_digit` int(11) NULL DEFAULT NULL,
+              PRIMARY KEY (`id`),
+              KEY `idx_pk_status` (`status`)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """)
             logger.info("[NewAPI Utils] MySQL 数据表结构已确认就绪。")
             return True
         except Exception as e:
@@ -421,6 +438,20 @@ class NewApiCore:
             );
             """)
             await self._ensure_column_sqlite("newapi_red_packet_records", "grabber_name", "TEXT")
+            await self._execute_sqlite("""
+            CREATE TABLE IF NOT EXISTS newapi_pk_matches (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              challenger_site INTEGER NOT NULL,
+              opponent_site INTEGER NOT NULL,
+              stake_raw INTEGER NOT NULL,
+              status TEXT NOT NULL DEFAULT 'PENDING',
+              created_at TEXT NOT NULL DEFAULT (datetime('now')),
+              expires_at TEXT,
+              settled_at TEXT,
+              winner_site INTEGER,
+              final_ms_digit INTEGER
+            );
+            """)
             logger.info("[NewAPI Utils] SQLite 数据表结构已确认就绪。")
             return True
         except Exception as e:
@@ -506,7 +537,8 @@ class NewApiCore:
             return None
         d = dict(row)
         # 将已知的时间戳字段字符串解析为 datetime 对象，保持与 MySQL 模式一致的接口
-        for col in ("binding_time", "last_check_in_time", "heist_time", "last_time"):
+        for col in ("binding_time", "last_check_in_time", "heist_time", "last_time",
+                    "created_at", "expires_at", "settled_at", "grabbed_at"):
             val = d.get(col)
             if isinstance(val, str):
                 try:
@@ -533,6 +565,7 @@ class NewApiCore:
         "newapi_openid_bindings",
         "newapi_check_in_state",
         "daily_heist_log",
+        "newapi_pk_matches",
     )
 
     # 迁移文件（SQLite）中的建表语句，与在线 SQLite 模式结构一致
@@ -569,6 +602,20 @@ class NewApiCore:
               heist_time TEXT NOT NULL DEFAULT (datetime('now')),
               outcome TEXT NOT NULL,
               amount INTEGER NOT NULL
+            )
+        """,
+        "newapi_pk_matches": """
+            CREATE TABLE IF NOT EXISTS newapi_pk_matches (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              challenger_site INTEGER NOT NULL,
+              opponent_site INTEGER NOT NULL,
+              stake_raw INTEGER NOT NULL,
+              status TEXT NOT NULL DEFAULT 'PENDING',
+              created_at TEXT NOT NULL DEFAULT (datetime('now')),
+              expires_at TEXT,
+              settled_at TEXT,
+              winner_site INTEGER,
+              final_ms_digit INTEGER
             )
         """,
     }
