@@ -224,6 +224,44 @@ class NewApiSuitePlugin(Star):
         except (TypeError, ValueError):
             return str(value)
 
+    async def _pk_at_identities(self, event: AstrMessageEvent, sites) -> list:
+        """按平台取网站 ID 对应的可 @身份：官机优先 OpenID，野机优先 QQ 号。"""
+        official = event.get_platform_name() == "qq_official"
+        identities = []
+        for site in sites:
+            identity = None
+            if official:
+                row = await self.core.get_openid_by_website_id(site)
+                identity = (row or {}).get('openid')
+                if not identity:
+                    row = await self.core.get_user_by_website_id(site)
+                    identity = (row or {}).get('qq_id')
+            else:
+                row = await self.core.get_user_by_website_id(site)
+                identity = (row or {}).get('qq_id')
+                if not identity:
+                    row = await self.core.get_openid_by_website_id(site)
+                    identity = (row or {}).get('openid')
+            if identity:
+                value = str(identity).strip()
+                if value and value not in identities:
+                    identities.append(value)
+        return identities
+
+    def _reply_with_ats(self, event: AstrMessageEvent, ats, text):
+        """带 @的消息链回复；无 @时回退普通文本回复。"""
+        if not ats:
+            return self._reply(event, text)
+        from astrbot.core.message.message_event_result import MessageChain, MessageEventResult
+        chain = MessageChain()
+        for identity in ats:
+            chain.at("", qq=identity)
+            chain.message(" ")
+        chain.message(self._maybe_markdown(event, text))
+        result = MessageEventResult(chain=chain.chain)
+        event.set_result(result)
+        return result
+
     def _red_packet_official_only_blocked(self, event: AstrMessageEvent, cmd: str = "") -> bool:
         """「红包仅官机」开启且本次请求来自野机（数字 QQ 身份）时返回 True，调用方应拒绝处理。
 
@@ -1275,7 +1313,8 @@ class NewApiSuitePlugin(Star):
                 await self._refresh_balance_cache(f"site:{details['challenger_site']}")
             case _:
                 reply = self.t("common.unexpected_error", err=status)
-        yield self._reply(event, reply)
+        ats = await self._pk_at_identities(event, [details['opponent_site']]) if status == "CREATED" else []
+        yield self._reply_with_ats(event, ats, reply)
 
     @filter.command("接受PK", alias={"接受pk", "接PK", "接pk"})
     @guard_errors
@@ -1329,7 +1368,11 @@ class NewApiSuitePlugin(Star):
                 reply = self.t("pk.settle_failed")
             case _:
                 reply = self.t("common.unexpected_error", err=status)
-        yield self._reply(event, reply)
+        ats = []
+        if status == "SETTLED":
+            ats = await self._pk_at_identities(
+                event, [details['challenger_site'], details['opponent_site']])
+        yield self._reply_with_ats(event, ats, reply)
 
     @filter.command("榜单")
     @guard_errors

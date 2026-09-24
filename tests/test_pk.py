@@ -301,6 +301,9 @@ class PkCommandHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.plugin.core = SimpleNamespace(
             get_user_by_identity=AsyncMock(return_value={"website_user_id": 13}),
         )
+        self.plugin.core.get_openid_by_website_id = AsyncMock(
+            side_effect=lambda site: {"openid": f"OPENID_{site}"})
+        self.plugin.core.get_user_by_website_id = AsyncMock(return_value=None)
         self.plugin._refresh_balance_cache = AsyncMock()
         created = {"challenger_site": 13, "opponent_site": 26,
                    "stake_raw": 10000, "stake_display": 100.0}
@@ -308,7 +311,7 @@ class PkCommandHandlerTests(unittest.IsolatedAsyncioTestCase):
                    "winner_site": 13, "loser_site": 26, "stake_raw": 10000,
                    "pot_display": 200.0, "digit": 3, "challenger_wins": True,
                    "winner_balance": 600.0, "loser_balance": 400.0,
-                   "settled_time": "2026-09-24 15:38:22"}
+                   "settled_time": "2026-09-24 15:38:22.123"}
         self.plugin.pk_handler = SimpleNamespace(
             create_challenge=AsyncMock(return_value=("CREATED", created)),
             accept_challenge=AsyncMock(return_value=("SETTLED", settled)),
@@ -343,7 +346,11 @@ class PkCommandHandlerTests(unittest.IsolatedAsyncioTestCase):
         replies = await self.collect(self.plugin.handle_pk_command(event, **params))
         self.plugin.pk_handler.create_challenge.assert_awaited_once_with(
             "openid:" + SENDER, "26", 100.0)
-        self.assertIn("网站ID 13 向 网站ID 26 发起 PK", replies[0])
+        result = replies[0]
+        ats = [c for c in result.chain if isinstance(c, At)]
+        self.assertEqual([str(a.qq) for a in ats], ["OPENID_26"])
+        plain = "".join(getattr(c, "text", "") for c in result.chain)
+        self.assertIn("网站ID 13 向 网站ID 26 发起 PK", plain)
 
     async def test_pk_command_bad_amount_never_creates(self):
         event = await self.event("PK 26 abc")
@@ -367,10 +374,14 @@ class PkCommandHandlerTests(unittest.IsolatedAsyncioTestCase):
                 replies = await self.collect(self.plugin.handle_accept_pk(event, **params))
                 self.plugin.pk_handler.accept_challenge.assert_awaited_with(
                     "openid:" + SENDER, expected)
-                self.assertIn("PK 结算", replies[0])
-                self.assertIn("结算时间：2026-09-24 15:38:22", replies[0])
-                self.assertIn("网站ID 13（胜）→ 600", replies[0])
-                self.assertIn("网站ID 26（负）→ 400", replies[0])
+                result = replies[0]
+                ats = [str(c.qq) for c in result.chain if isinstance(c, At)]
+                self.assertEqual(ats, ["OPENID_13", "OPENID_26"])
+                plain = "".join(getattr(c, "text", "") for c in result.chain)
+                self.assertIn("PK 结算", plain)
+                self.assertIn("结算时间：2026-09-24 15:38:22.123", plain)
+                self.assertIn("网站ID 13（胜）→ 600", plain)
+                self.assertIn("网站ID 26（负）→ 400", plain)
 
 
 if __name__ == "__main__":

@@ -327,7 +327,7 @@ class PkLogic:
         loser_data = await self.core.get_api_user_data(loser_site)
         winner_balance = (winner_data.get("quota") / ratio) if winner_data else None
         loser_balance = (loser_data.get("quota") / ratio) if loser_data else None
-        settled_time = datetime.fromtimestamp(self._now_fn()).strftime("%Y-%m-%d %H:%M:%S")
+        settled_time = datetime.fromtimestamp(self._now_fn()).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         return "SETTLED", {
             "match_id": match_id,
             "challenger_site": challenger_site,
