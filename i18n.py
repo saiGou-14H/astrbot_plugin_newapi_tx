@@ -36,7 +36,7 @@ _TRANSLATIONS = {
             "\n【娱乐】\n"
             "打劫 网站ID 或 @成员 —— 打劫一次\n"
             "PK 网站ID 金额 —— 发起 PK（5 分钟内应战；挑战管理员自动应战）\n"
-            "接受PK [发起人网站ID] —— 应战；时间戳数字和取尾数：单=挑战者胜、双=应战者胜\n"
+            "接受PK [发起人网站ID] —— 应战；时间戳数字和取尾数：双=挑战者胜、单=应战者胜\n"
             "榜单 —— 群余额榜与打劫榜\n"
             "消耗榜 —— 全站 Token 消耗榜\n"
             "\n【红包】\n"
@@ -202,6 +202,7 @@ _TRANSLATIONS = {
         "pk.disabled": "⚔️ PK 功能当前未开启。",
         "pk.usage": "用法：PK 对方网站ID 金额，例如：PK 13 100（也可 @对方 100）。\n发起后立即扣除你的押注；对方需在 5 分钟内发送「接受PK 你的网站ID」应战并扣除同等押注，超时自动退还。",
         "pk.amount_invalid": "❌ 押注金额必须是大于 0 的有效数字。",
+        "pk.stake_too_large": "❌ 单次下注不能超过 {max} 额度。",
         "pk.self": "🤦 不能挑战自己。",
         "pk.target_not_found": "❌ 未找到目标 {id} 的绑定记录。",
         "pk.already_pending": "⏳ 你与该目标已有一局待应战的 PK，请等待对方应战或 5 分钟过期。",
@@ -214,7 +215,7 @@ _TRANSLATIONS = {
         "pk.accept.expired": "⏰ 这局 PK 已超过保留时间，自动结束并退还了发起人押金。",
         "pk.accept.insufficient": "❌ 余额不足，无法应战 PK：需要 {need} 额度，当前 {balance}。",
         "pk.accept.deduct_failed": "❌ 应战押注扣款失败，请稍后再试。",
-        "pk.settled": "⚔️ PK 结算！\n🕐 结算毫秒时间戳：{time}\n🧮 计算过程：{expression} = {digit_sum} → 尾数 {digit}（{parity}）\n🏆 胜者：网站ID {winner}（获得 {pot} 额度）\n💸 败者：网站ID {loser}\n💰 结算后余额：\n  网站ID {winner}（胜）→ {winner_balance}\n  网站ID {loser}（负）→ {loser_balance}\n📜 规则：时间戳全部数字求和取尾数，单数=挑战者胜，双数=应战者胜。",
+        "pk.settled": "⚔️ PK 结算！\n🕐 结算毫秒时间戳：{time}\n🧮 计算过程：{expression} = {digit_sum} → 尾数 {digit}（{parity}）\n🏆 胜者：网站ID {winner}（获得 {pot} 额度）\n💸 败者：网站ID {loser}\n💰 结算后余额：\n  网站ID {winner}（胜）→ {winner_balance}\n  网站ID {loser}（负）→ {loser_balance}\n📜 规则：时间戳全部数字求和取尾数，双数=挑战者胜，奇数=应战者胜。",
         "pk.parity_odd": "单数",
         "pk.parity_even": "双数",
         "pk.balance_unavailable": "查询失败",
@@ -248,7 +249,7 @@ _TRANSLATIONS = {
             "\n[Fun]\n"
             "打劫 <website ID> or @member — heist\n"
             "PK <website ID> <amount> — challenge (accept within 5 min; auto-accepted vs admin)\n"
-            "接受PK [challenger ID] — sum timestamp digits; odd tail = challenger wins\n"
+            "接受PK [challenger ID] — sum timestamp digits; even tail = challenger wins\n"
             "榜单 — balance & heist leaderboards\n"
             "消耗榜 — site-wide token consumption\n"
             "\n[Red packets]\n"
@@ -404,6 +405,7 @@ _TRANSLATIONS = {
         "pk.disabled": "⚔️ The PK feature is currently disabled.",
         "pk.usage": "Usage: PK <opponent website ID> <amount>, e.g. PK 13 100 (or mention the opponent then amount).\nYour stake is deducted immediately; the opponent has 5 minutes to send \"接受PK <your website ID>\", otherwise the stake is refunded automatically.",
         "pk.amount_invalid": "❌ The stake must be a positive finite number.",
+        "pk.stake_too_large": "❌ A single stake cannot exceed {max} quota.",
         "pk.self": "🤦 You cannot challenge yourself.",
         "pk.target_not_found": "❌ No binding found for target {id}.",
         "pk.already_pending": "⏳ You already have a pending PK with this opponent. Wait for them to accept or for it to expire.",
@@ -416,7 +418,7 @@ _TRANSLATIONS = {
         "pk.accept.expired": "⏰ This PK already expired and the challenger's stake was refunded.",
         "pk.accept.insufficient": "❌ Insufficient balance to accept the PK: {need} needed, current {balance}.",
         "pk.accept.deduct_failed": "❌ Stake deduction failed while accepting; please retry.",
-        "pk.settled": "⚔️ PK settled!\n🕐 Settled ms timestamp: {time}\n🧮 Process: {expression} = {digit_sum} → last digit {digit} ({parity})\n🏆 Winner: Website ID {winner} (received {pot} quota)\n💸 Loser: Website ID {loser}\n💰 Balances after settlement:\n  Website ID {winner} (W) → {winner_balance}\n  Website ID {loser} (L) → {loser_balance}\n📜 Rule: sum all digits of the timestamp, take the last digit; odd = challenger wins, even = acceptor wins.",
+        "pk.settled": "⚔️ PK settled!\n🕐 Settled ms timestamp: {time}\n🧮 Process: {expression} = {digit_sum} → last digit {digit} ({parity})\n🏆 Winner: Website ID {winner} (received {pot} quota)\n💸 Loser: Website ID {loser}\n💰 Balances after settlement:\n  Website ID {winner} (W) → {winner_balance}\n  Website ID {loser} (L) → {loser_balance}\n📜 Rule: sum all digits of the timestamp, take the last digit; even = challenger wins, odd = acceptor wins.",
         "pk.parity_odd": "odd",
         "pk.parity_even": "even",
         "pk.balance_unavailable": "unavailable",

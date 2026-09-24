@@ -18,7 +18,7 @@ class PkLogic:
     资金模型（公开、确定性）：
       - 发起挑战时挑战者立即扣除 stake；
       - 应战时应战者立即扣除同等 stake；
-      - 结算毫秒尾数为单数 → 挑战者胜；双数 → 应战者胜；
+      - 结算毫秒时间戳全部数字求和取尾数：双数 → 挑战者胜；单数 → 应战者胜；
       - 胜者获得双方押注之和（本金返还 + 对方押注），败者失去押注；
       - 挑战 5 分钟过期：超时自动退还挑战者押注；
       - 任何扣款/发放失败路径都会尽力原路退款，并在无法退款时留下需人工介入的状态。
@@ -201,6 +201,9 @@ class PkLogic:
         raw, code = self._raw_amount(display_amount)
         if code != "VALID":
             return "INVALID_AMOUNT", {}
+        max_stake = float(config_get(self.config, 'pk_settings.max_stake', 100) or 0)
+        if max_stake > 0 and float(display_amount) > max_stake:
+            return "STAKE_TOO_LARGE", {"max": max_stake}
 
         challenger_binding = await self.core.get_user_by_identity(challenger_identity)
         if not challenger_binding:
@@ -347,7 +350,7 @@ class PkLogic:
         digit_parts = [ch for ch in settled_time if ch.isdigit()]
         digit_sum = sum(int(ch) for ch in digit_parts)
         digit = digit_sum % 10
-        challenger_wins = digit % 2 == 1
+        challenger_wins = digit % 2 == 0  # 双数=挑战者胜，单数=应战者胜
         winner_site = challenger_site if challenger_wins else opponent_site
         loser_site = opponent_site if challenger_wins else challenger_site
         pot_raw = stake_raw * 2

@@ -226,7 +226,7 @@ class NewApiSuitePlugin(Star):
 
     def _pk_settled_reply(self, details) -> str:
         """组装 PK 结算文案（含毫秒时间戳、计算过程与双方余额）。"""
-        parity = self.t("pk.parity_odd" if details['challenger_wins'] else "pk.parity_even")
+        parity = self.t("pk.parity_odd" if int(details['digit']) % 2 == 1 else "pk.parity_even")
         winner_balance = details.get('winner_balance')
         loser_balance = details.get('loser_balance')
         return self.t("pk.settled", digit=details['digit'], parity=parity,
@@ -1348,6 +1348,8 @@ class NewApiSuitePlugin(Star):
                 reply = self.t("pk.disabled")
             case "INVALID_AMOUNT":
                 reply = self.t("pk.amount_invalid")
+            case "STAKE_TOO_LARGE":
+                reply = self.t("pk.stake_too_large", max=self._fmt_quota(details['max']))
             case "CHALLENGER_NOT_BOUND":
                 reply = self.t("not_bound")
             case "TARGET_NOT_FOUND":
