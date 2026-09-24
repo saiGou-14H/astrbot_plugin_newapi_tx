@@ -347,9 +347,9 @@ class PkCommandHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.plugin.pk_handler.create_challenge.assert_awaited_once_with(
             "openid:" + SENDER, "26", 100.0)
         result = replies[0]
-        ats = [c for c in result.chain if isinstance(c, At)]
-        self.assertEqual([str(a.qq) for a in ats], ["OPENID_26"])
+        self.assertEqual([c for c in result.chain if isinstance(c, At)], [])
         plain = "".join(getattr(c, "text", "") for c in result.chain)
+        self.assertTrue(plain.startswith("<@OPENID_26> "))
         self.assertIn("网站ID 13 向 网站ID 26 发起 PK", plain)
 
     async def test_pk_command_bad_amount_never_creates(self):
@@ -375,13 +375,26 @@ class PkCommandHandlerTests(unittest.IsolatedAsyncioTestCase):
                 self.plugin.pk_handler.accept_challenge.assert_awaited_with(
                     "openid:" + SENDER, expected)
                 result = replies[0]
-                ats = [str(c.qq) for c in result.chain if isinstance(c, At)]
-                self.assertEqual(ats, ["OPENID_13", "OPENID_26"])
+                self.assertEqual([c for c in result.chain if isinstance(c, At)], [])
                 plain = "".join(getattr(c, "text", "") for c in result.chain)
+                self.assertIn("<@OPENID_13> <@OPENID_26> ", plain)
                 self.assertIn("PK 结算", plain)
                 self.assertIn("结算时间：2026-09-24 15:38:22.123", plain)
                 self.assertIn("网站ID 13（胜）→ 600", plain)
                 self.assertIn("网站ID 26（负）→ 400", plain)
+
+    async def test_wild_platform_uses_at_components(self):
+        event = await self.event("接受PK 13")
+        with patch.object(event, "get_platform_name", return_value="aiocqhttp"):
+            self.plugin.core.get_user_by_website_id = AsyncMock(
+                side_effect=lambda site: {"qq_id": 70000 + site})
+            params = self.parse("接受PK", event, NewApiSuitePlugin.handle_accept_pk)
+            replies = await self.collect(self.plugin.handle_accept_pk(event, **params))
+        result = replies[0]
+        ats = [str(c.qq) for c in result.chain if isinstance(c, At)]
+        self.assertEqual(ats, ["70013", "70026"])
+        plain = "".join(getattr(c, "text", "") for c in result.chain)
+        self.assertIn("PK 结算", plain)
 
 
 if __name__ == "__main__":

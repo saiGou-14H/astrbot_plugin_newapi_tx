@@ -225,23 +225,13 @@ class NewApiSuitePlugin(Star):
             return str(value)
 
     async def _pk_at_identities(self, event: AstrMessageEvent, sites) -> list:
-        """按平台取网站 ID 对应的可 @身份：官机优先 OpenID，野机优先 QQ 号。"""
-        official = event.get_platform_name() == "qq_official"
+        """按平台取网站 ID 对应的可 @身份：官机只取 OpenID，野机只取 QQ 号。"""
+        official = event.get_platform_name() in ("qq_official", "qq_official_webhook")
         identities = []
         for site in sites:
-            identity = None
-            if official:
-                row = await self.core.get_openid_by_website_id(site)
-                identity = (row or {}).get('openid')
-                if not identity:
-                    row = await self.core.get_user_by_website_id(site)
-                    identity = (row or {}).get('qq_id')
-            else:
-                row = await self.core.get_user_by_website_id(site)
-                identity = (row or {}).get('qq_id')
-                if not identity:
-                    row = await self.core.get_openid_by_website_id(site)
-                    identity = (row or {}).get('openid')
+            row = (await self.core.get_openid_by_website_id(site)) if official \
+                else (await self.core.get_user_by_website_id(site))
+            identity = (row or {}).get('openid' if official else 'qq_id')
             if identity:
                 value = str(identity).strip()
                 if value and value not in identities:
@@ -249,10 +239,22 @@ class NewApiSuitePlugin(Star):
         return identities
 
     def _reply_with_ats(self, event: AstrMessageEvent, ats, text):
-        """带 @的消息链回复；无 @时回退普通文本回复。"""
+        """带 @的消息回复；无 @时回退普通文本回复。
+
+        官方 QQ 适配器发送时会丢弃 At 消息段，因此官方通道直接把提及写成
+        协议正文语法 <@openid>，并以纯文本模式发送；野机通道继续用 At 组件。
+        """
         if not ats:
             return self._reply(event, text)
+        from astrbot.api.message_components import Plain
         from astrbot.core.message.message_event_result import MessageChain, MessageEventResult
+        platform = event.get_platform_name()
+        if platform in ("qq_official", "qq_official_webhook"):
+            text = "".join(f"<@{identity}> " for identity in ats) + text
+            chain = MessageChain(chain=[Plain(text=text)], use_markdown_=False)
+            result = MessageEventResult(chain=chain.chain, use_markdown_=False)
+            event.set_result(result)
+            return result
         chain = MessageChain()
         for identity in ats:
             chain.at("", qq=identity)
