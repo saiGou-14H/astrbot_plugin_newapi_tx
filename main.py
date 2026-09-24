@@ -224,6 +224,22 @@ class NewApiSuitePlugin(Star):
         except (TypeError, ValueError):
             return str(value)
 
+    def _pk_settled_reply(self, details) -> str:
+        """组装 PK 结算文案（含毫秒时间与双方余额）。"""
+        parity = self.t("pk.parity_odd" if details['challenger_wins'] else "pk.parity_even")
+        winner_balance = details.get('winner_balance')
+        loser_balance = details.get('loser_balance')
+        return self.t("pk.settled", digit=details['digit'], parity=parity,
+                      time=details.get('settled_time', ''),
+                      winner=details['winner_site'], loser=details['loser_site'],
+                      pot=self._fmt_quota(details['pot_display']),
+                      winner_balance=(self._fmt_quota(winner_balance)
+                                      if winner_balance is not None
+                                      else self.t("pk.balance_unavailable")),
+                      loser_balance=(self._fmt_quota(loser_balance)
+                                     if loser_balance is not None
+                                     else self.t("pk.balance_unavailable")))
+
     async def _pk_at_identities(self, event: AstrMessageEvent, sites) -> list:
         """按平台取网站 ID 对应的可 @身份：官机只取 OpenID，野机只取 QQ 号。"""
         official = event.get_platform_name() in ("qq_official", "qq_official_webhook")
@@ -1353,9 +1369,23 @@ class NewApiSuitePlugin(Star):
                                amount=self._fmt_quota(details['stake_display']),
                                minutes=max(1, expiry_seconds // 60))
                 await self._refresh_balance_cache(f"site:{details['challenger_site']}")
+            case "AUTO_SETTLED":
+                reply = self._pk_settled_reply(details)
+                await self._refresh_balance_cache(f"site:{details['winner_site']}")
+                await self._refresh_balance_cache(f"site:{details['loser_site']}")
+            case "AUTO_ACCEPT_FAILED_REFUNDED":
+                reply = self.t("pk.auto_failed")
+                await self._refresh_balance_cache(f"site:{details['challenger_site']}")
+            case "SETTLE_FAILED_REFUNDED":
+                reply = self.t("pk.settle_failed")
             case _:
                 reply = self.t("common.unexpected_error", err=status)
-        ats = await self._pk_at_identities(event, [details['opponent_site']]) if status == "CREATED" else []
+        ats = []
+        if status == "CREATED":
+            ats = await self._pk_at_identities(event, [details['opponent_site']])
+        elif status == "AUTO_SETTLED":
+            ats = await self._pk_at_identities(
+                event, [details['challenger_site'], details['opponent_site']])
         yield self._reply_with_ats(event, ats, reply)
 
     @filter.command("接受PK", alias={"接受pk", "接PK", "接pk"})
@@ -1391,19 +1421,7 @@ class NewApiSuitePlugin(Star):
             case "ACCEPT_DEDUCT_FAILED":
                 reply = self.t("pk.accept.deduct_failed")
             case "SETTLED":
-                parity = self.t("pk.parity_odd" if details['challenger_wins'] else "pk.parity_even")
-                winner_balance = details.get('winner_balance')
-                loser_balance = details.get('loser_balance')
-                reply = self.t("pk.settled", digit=details['digit'], parity=parity,
-                               time=details.get('settled_time', ''),
-                               winner=details['winner_site'], loser=details['loser_site'],
-                               pot=self._fmt_quota(details['pot_display']),
-                               winner_balance=(self._fmt_quota(winner_balance)
-                                               if winner_balance is not None
-                                               else self.t("pk.balance_unavailable")),
-                               loser_balance=(self._fmt_quota(loser_balance)
-                                              if loser_balance is not None
-                                              else self.t("pk.balance_unavailable")))
+                reply = self._pk_settled_reply(details)
                 await self._refresh_balance_cache(f"site:{details['winner_site']}")
                 await self._refresh_balance_cache(f"site:{details['loser_site']}")
             case "SETTLE_FAILED_REFUNDED":

@@ -35,7 +35,7 @@ _TRANSLATIONS = {
             "解绑 网站ID（管理员）\n"
             "\n【娱乐】\n"
             "打劫 网站ID 或 @成员 —— 打劫一次\n"
-            "PK 网站ID 金额 —— 发起 PK（5 分钟内应战）\n"
+            "PK 网站ID 金额 —— 发起 PK（5 分钟内应战；挑战管理员自动应战）\n"
             "接受PK [发起人网站ID] —— 应战；毫秒尾数单=挑战者胜、双=应战者胜\n"
             "榜单 —— 群余额榜与打劫榜\n"
             "消耗榜 —— 全站 Token 消耗榜\n"
@@ -219,6 +219,7 @@ _TRANSLATIONS = {
         "pk.parity_even": "双数",
         "pk.balance_unavailable": "查询失败",
         "pk.settle_failed": "❌ PK 结算出现异常，已尝试原路退还双方押金；请稍后用「查询余额」核对，仍有问题请联系管理员。",
+        "pk.auto_failed": "⚔️ 已自动应战但未能完成结算（管理员余额不足或扣款失败），你的押注已退还。",
     },
     "en": {
         "common.at_or_id_required": "Please @ a user or enter a website ID / QQ number.",
@@ -246,7 +247,7 @@ _TRANSLATIONS = {
             "解绑 <website ID> (admin)\n"
             "\n[Fun]\n"
             "打劫 <website ID> or @member — heist\n"
-            "PK <website ID> <amount> — challenge (accept within 5 min)\n"
+            "PK <website ID> <amount> — challenge (accept within 5 min; auto-accepted vs admin)\n"
             "接受PK [challenger ID] — odd ms digit = challenger wins\n"
             "榜单 — balance & heist leaderboards\n"
             "消耗榜 — site-wide token consumption\n"
@@ -420,6 +421,7 @@ _TRANSLATIONS = {
         "pk.parity_even": "even",
         "pk.balance_unavailable": "unavailable",
         "pk.settle_failed": "❌ PK settlement failed; both stakes were refunded where possible. Check your balance with 查询余额 and contact the admin if anything is missing.",
+        "pk.auto_failed": "⚔️ The PK was auto-accepted but could not settle (admin balance insufficient or deduction failed); your stake has been refunded.",
     },
 }
 

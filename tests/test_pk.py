@@ -48,7 +48,8 @@ class PkLogicTests(unittest.IsolatedAsyncioTestCase):
         config = AstrBotConfig.__new__(AstrBotConfig)
         config.update({
             "binding_settings": {"quota_display_ratio": 100},
-            "pk_settings": {"enabled": True, "expiry_seconds": 300},
+            "pk_settings": {"enabled": True, "expiry_seconds": 300,
+                            "auto_accept_admin_site": 1},
         })
         self.config = config
         self.core = NewApiCore(config)
@@ -273,6 +274,51 @@ class PkLogicTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status, "DB_FAILED")
         self.assertEqual(self.balances[CHALLENGER_SITE], 50000)
 
+    async def seed_admin(self):
+        await self.connection.execute(
+            "INSERT INTO newapi_bindings (qq_id, website_user_id) VALUES (?, ?)",
+            (60001, 1))
+        await self.connection.commit()
+        self.balances[1] = 0
+
+    async def test_auto_accept_admin_settles_immediately(self):
+        await self.seed()
+        await self.seed_admin()
+        self.balances[CHALLENGER_SITE] = 50000
+        self.balances[1] = 50000
+        self.pk._now_fn = lambda: 1000.123  # odd → challenger wins
+        status, details = await self.pk.create_challenge("qq:70001", "1", 100.0)
+        self.assertEqual(status, "AUTO_SETTLED")
+        self.assertEqual(details["winner_site"], CHALLENGER_SITE)
+        self.assertEqual(self.balances[CHALLENGER_SITE], 60000)
+        self.assertEqual(self.balances[1], 40000)
+        self.assertEqual(details["winner_balance"], 600.0)
+        self.assertEqual(details["loser_balance"], 400.0)
+        rows = await self.pending_rows()
+        self.assertEqual(rows[0]["status"], "SETTLED")
+        self.assertEqual(rows[0]["winner_site"], CHALLENGER_SITE)
+
+    async def test_auto_accept_admin_insufficient_balance_refunds(self):
+        await self.seed()
+        await self.seed_admin()
+        self.balances[CHALLENGER_SITE] = 50000
+        self.balances[1] = 5000
+        status, _ = await self.pk.create_challenge("qq:70001", "1", 100.0)
+        self.assertEqual(status, "AUTO_ACCEPT_FAILED_REFUNDED")
+        self.assertEqual(self.balances[CHALLENGER_SITE], 50000)
+        self.assertEqual(self.balances[1], 5000)
+        self.assertEqual((await self.pending_rows())[0]["status"], "REFUNDED")
+
+    async def test_auto_accept_disabled_when_site_is_zero(self):
+        await self.seed()
+        await self.seed_admin()
+        self.config["pk_settings"]["auto_accept_admin_site"] = 0
+        self.balances[CHALLENGER_SITE] = 50000
+        status, details = await self.pk.create_challenge("qq:70001", "1", 100.0)
+        self.assertEqual(status, "CREATED")
+        self.assertEqual(details["opponent_site"], 1)
+        self.assertEqual((await self.pending_rows())[0]["status"], "PENDING")
+
 
 class PkCommandHandlerTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -358,6 +404,27 @@ class PkCommandHandlerTests(unittest.IsolatedAsyncioTestCase):
         replies = await self.collect(self.plugin.handle_pk_command(event, **params))
         self.assertIn("押注金额必须是大于 0 的有效数字", replies[0])
         self.plugin.pk_handler.create_challenge.assert_not_awaited()
+
+    async def test_pk_auto_settled_reply_and_auto_failed_reply(self):
+        settled = {"challenger_site": 13, "opponent_site": 26,
+                   "winner_site": 13, "loser_site": 26, "stake_raw": 10000,
+                   "pot_display": 200.0, "digit": 3, "challenger_wins": True,
+                   "winner_balance": 600.0, "loser_balance": 400.0,
+                   "settled_time": "2026-09-24 15:38:22.123"}
+        self.plugin.pk_handler.create_challenge = AsyncMock(
+            return_value=("AUTO_SETTLED", settled))
+        event = await self.event("PK 26 100")
+        params = self.parse("PK", event, NewApiSuitePlugin.handle_pk_command)
+        replies = await self.collect(self.plugin.handle_pk_command(event, **params))
+        result = replies[0]
+        plain = "".join(getattr(c, "text", "") for c in result.chain)
+        self.assertIn("PK 结算", plain)
+        self.assertIn("<@OPENID_13> <@OPENID_26> ", plain)
+        self.assertIn("结算时间：2026-09-24 15:38:22.123", plain)
+        self.plugin.pk_handler.create_challenge = AsyncMock(
+            return_value=("AUTO_ACCEPT_FAILED_REFUNDED", {"challenger_site": 13}))
+        replies = await self.collect(self.plugin.handle_pk_command(event, **params))
+        self.assertIn("已自动应战但未能完成结算", replies[0])
 
     async def test_pk_command_usage_without_amount(self):
         event = await self.event("PK 26")

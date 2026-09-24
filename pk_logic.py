@@ -231,6 +231,9 @@ class PkLogic:
             if match_id is None:
                 await self._refund(challenger_site, raw, 'insert_failed')
                 return "DB_FAILED", {}
+        auto_site = int(config_get(self.config, 'pk_settings.auto_accept_admin_site', 0) or 0)
+        if auto_site > 0 and opponent_site == auto_site:
+            return await self._auto_accept(match_id, challenger_site, opponent_site, raw)
         return "CREATED", {
             "match_id": match_id,
             "challenger_site": challenger_site,
@@ -238,6 +241,38 @@ class PkLogic:
             "stake_raw": raw,
             "stake_display": raw / ratio,
         }
+
+    async def _auto_accept(self, match_id: int, challenger_site: int,
+                           opponent_site: int, stake_raw: int) -> Tuple[str, Dict[str, Any]]:
+        """管理员账号自动应战：claim 后立即结算；失败则退还挑战者押注。"""
+        claimed = await self.core.execute_query(
+            "UPDATE newapi_pk_matches SET status = %s WHERE id = %s AND status = %s",
+            (self.ST_ACCEPTING, match_id, self.ST_PENDING),
+        )
+        if not claimed:
+            await self._refund(challenger_site, stake_raw, 'auto_claim_failed')
+            return "AUTO_ACCEPT_FAILED_REFUNDED", {
+                "challenger_site": challenger_site, "stake_raw": stake_raw,
+            }
+        try:
+            status, details = await self._settle(match_id, challenger_site, opponent_site, stake_raw)
+        except BaseException:
+            status, details = await self._fail_settle(match_id, challenger_site, opponent_site, stake_raw)
+        if status in ("ACCEPT_INSUFFICIENT_BALANCE", "ACCEPT_DEDUCT_FAILED"):
+            # 管理员余额不足或扣款失败：挑战不成立，退还挑战者押注
+            await self._refund(challenger_site, stake_raw, 'auto_accept_failed')
+            await self.core.execute_query(
+                "UPDATE newapi_pk_matches SET status = %s, settled_at = %s "
+                "WHERE id = %s AND status = %s",
+                (self.ST_REFUNDED, self._format_dt(self._now()), match_id, self.ST_PENDING),
+            )
+            return "AUTO_ACCEPT_FAILED_REFUNDED", {
+                "challenger_site": challenger_site, "opponent_site": opponent_site,
+                "stake_raw": stake_raw,
+            }
+        if status == "SETTLED":
+            return "AUTO_SETTLED", details
+        return status, details
 
     async def accept_challenge(self, opponent_identity,
                                challenger_identifier: Optional[str] = None) -> Tuple[str, Dict[str, Any]]:
