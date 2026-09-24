@@ -30,7 +30,7 @@ _TRANSLATIONS = {
             "签到 —— 每日签到领额度\n"
             "查余额 网站ID（管理员）—— 查他人余额\n"
             "查询 网站ID/QQ/OpenID（管理员）—— 查绑定\n"
-            "查ID 用户名/邮箱（管理员）—— 查网站用户ID\n"
+            "查ID 用户名/邮箱 —— 查网站用户ID\n"
             "调整余额 网站ID 金额（管理员）—— 正数加/负数减\n"
             "解绑 网站ID（管理员）\n"
             "\n【娱乐】\n"
@@ -93,7 +93,7 @@ _TRANSLATIONS = {
         "lookup.website": "✅ 查询成功！输入的是【网站ID】\n--------------------\n网站ID: {site_id}\n已绑定至QQ: {qq}\n绑定时间: {time}",        "lookup.qq": "✅ 查询成功！输入的是【QQ号】\n--------------------\nQQ号: {qq}\n已绑定至网站ID: {site_id}\n绑定时间: {time}",
         "lookup.not_found": "❌ 查询失败：未在绑定记录中找到与 {id} 相关的任何信息。",
         "lookup.openid_extra": "\n🔗 另有 OpenID 绑定（官机）：{openid}",
-        # 查ID（管理员，按用户名/邮箱搜索网站用户）
+        # 查ID（按用户名/邮箱搜索网站用户，所有用户可用，邮箱打码）
         "search.usage": "用法：查ID 用户名或邮箱\n例如：查ID 张三 或 查ID zhangsan@example.com",
         "search.header": "🔍 按「{keyword}」查到的网站用户（最多 5 条）：",
         "search.line": "ID: {user_id}｜用户名: {username}｜邮箱: {email}",
@@ -241,7 +241,7 @@ _TRANSLATIONS = {
             "签到 — daily check-in quota\n"
             "查余额 <website ID> (admin) — others' balance\n"
             "查询 <website ID/QQ/OpenID> (admin) — bindings\n"
-            "查ID <username/email> (admin) — find website user ID\n"
+            "查ID <username/email> — find website user ID\n"
             "调整余额 <website ID> <amount> (admin) — add/subtract\n"
             "解绑 <website ID> (admin)\n"
             "\n[Fun]\n"
@@ -299,7 +299,7 @@ _TRANSLATIONS = {
         "lookup.qq": "✅ Found! Input was a [QQ]\n--------------------\nQQ: {qq}\nBound to website ID: {site_id}\nBound at: {time}",
         "lookup.not_found": "❌ Query failed: no binding record found for {id}.",
         "lookup.openid_extra": "\n🔗 Also bound via OpenID (official bot): {openid}",
-        # Search by username/email (admin)
+        # Search by username/email (available to everyone; email masked)
         "search.usage": "Usage: 查ID <username or email>\ne.g. 查ID zhangsan or 查ID zhangsan@example.com",
         "search.header": "🔍 Users matching \"{keyword}\" (up to 5):",
         "search.line": "ID: {user_id} | username: {username} | email: {email}",

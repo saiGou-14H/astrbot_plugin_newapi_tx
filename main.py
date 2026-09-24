@@ -542,9 +542,8 @@ class NewApiSuitePlugin(Star):
 
     @filter.command("查ID", alias={"查用户", "用户ID"})
     @guard_errors
-    @filter.permission_type(filter.PermissionType.ADMIN)
     async def handle_search_user(self, event: AstrMessageEvent, arguments: GreedyStr):
-        """(管理员) 按 NewAPI 用户名或绑定邮箱查询用户 ID。"""
+        """按 NewAPI 用户名或绑定邮箱查询用户 ID（所有用户可用，邮箱打码）。"""
         keyword = str(arguments or "").strip()
         if not keyword:
             yield self._reply(event, self.t("search.usage"))
