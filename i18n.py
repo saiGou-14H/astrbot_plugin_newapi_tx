@@ -21,6 +21,39 @@ _TRANSLATIONS = {
         "ping.db_engine": "数据库引擎",
         "ping.db_status": "数据库状态",
         "ping.api_status": "New API 状态",
+        # 指令大全
+        "help.header": "📚 中转站指令大全（NewAPI 套件 V{version}）\n====================\n",
+        "help.body": (
+            "【账户】\n"
+            "绑定 网站ID —— 绑定你的网站账号\n"
+            "查询余额 —— 查自己的余额\n"
+            "签到 —— 每日签到领额度\n"
+            "查余额 网站ID（管理员）—— 查他人余额\n"
+            "查询 网站ID/QQ/OpenID（管理员）—— 查绑定\n"
+            "调整余额 网站ID 金额（管理员）—— 正数加/负数减\n"
+            "解绑 网站ID（管理员）\n"
+            "\n【娱乐】\n"
+            "打劫 网站ID 或 @成员 —— 打劫一次\n"
+            "PK 网站ID 金额 —— 发起 PK（5 分钟内应战）\n"
+            "接受PK [发起人网站ID] —— 应战；毫秒尾数单=挑战者胜、双=应战者胜\n"
+            "榜单 —— 群余额榜与打劫榜\n"
+            "消耗榜 —— 全站 Token 消耗榜\n"
+            "\n【红包】\n"
+            "发红包 份数 总额度（管理员）\n"
+            "抢红包 红包代码\n"
+            "个人红包 份数 总额度 —— 从自己余额发\n"
+            "验证令牌 网站访问令牌 —— 个人红包首次需验证\n"
+            "红包诊断（管理员）\n"
+            "\n【数据与诊断】\n"
+            "new-tx 导出 / new-tx 导入（管理员，导入覆盖数据）\n"
+            "pingapi —— 数据库与 New API 连接状态\n"
+            "提及诊断 —— QQ 成员 @只读检查\n"
+            "\n【中转站健康度（模型情况插件）】\n"
+            "模型情况 —— 模型健康度图卡\n"
+            "模型情况 <主题> / 模型情况主题\n"
+            "模型情况会话（管理员）\n"
+            "\n指令无需 @机器人，直接发送即可。"
+        ),
         # 查询余额（本人）
         "query_balance.failed": "查询失败，无法从网站获取您的余额信息。请稍后再试或联系管理员。",
         "query_balance.success": "查询成功！\n--------------------\n您绑定的网站ID: {site_id}\n当前剩余额度: {quota}",
@@ -193,6 +226,39 @@ _TRANSLATIONS = {
         "ping.db_engine": "Database Engine",
         "ping.db_status": "Database Status",
         "ping.api_status": "New API Status",
+        # Command reference
+        "help.header": "📚 Transit Station Command Reference (NewAPI suite V{version})\n====================\n",
+        "help.body": (
+            "[Account]\n"
+            "绑定 <website ID> — bind your website account\n"
+            "查询余额 — check your own balance\n"
+            "签到 — daily check-in quota\n"
+            "查余额 <website ID> (admin) — others' balance\n"
+            "查询 <website ID/QQ/OpenID> (admin) — bindings\n"
+            "调整余额 <website ID> <amount> (admin) — add/subtract\n"
+            "解绑 <website ID> (admin)\n"
+            "\n[Fun]\n"
+            "打劫 <website ID> or @member — heist\n"
+            "PK <website ID> <amount> — challenge (accept within 5 min)\n"
+            "接受PK [challenger ID] — odd ms digit = challenger wins\n"
+            "榜单 — balance & heist leaderboards\n"
+            "消耗榜 — site-wide token consumption\n"
+            "\n[Red packets]\n"
+            "发红包 <count> <total> (admin)\n"
+            "抢红包 <code>\n"
+            "个人红包 <count> <total> — from your balance\n"
+            "验证令牌 <access token> — required before personal packets\n"
+            "红包诊断 (admin)\n"
+            "\n[Data & diagnostics]\n"
+            "new-tx 导出 / new-tx 导入 (admin; import overwrites)\n"
+            "pingapi — DB and New API status\n"
+            "提及诊断 — read-only QQ mention check\n"
+            "\n[Model health (separate plugin)]\n"
+            "模型情况 — health cards\n"
+            "模型情况 <theme> / 模型情况主题\n"
+            "模型情况会话 (admin)\n"
+            "\nNo @mention or slash needed: send the command directly."
+        ),
         "query_balance.failed": "Query failed: unable to fetch your balance from the website. Please try again later or contact the admin.",
         "query_balance.success": "Query successful!\n--------------------\nYour bound website ID: {site_id}\nCurrent remaining quota: {quota}",
         "query_other.not_found": "❌ Query failed: no binding record found for {id}.",

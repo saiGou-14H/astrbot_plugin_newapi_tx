@@ -508,6 +508,12 @@ class NewApiSuitePlugin(Star):
         logger.info("[NewAPI Suite] KV 绑定缓存已清空。")
 
 
+    @filter.command("中转站指令", alias={"中转站帮助", "指令大全"})
+    @guard_errors
+    async def handle_tx_help(self, event: AstrMessageEvent):
+        """推送中转站套件指令大全；免 @兼容对普通群消息同样生效。"""
+        yield self._reply(event, self.t("help.header", version=PLUGIN_VERSION) + self.t("help.body"))
+
     @filter.command("pingapi")
     @guard_errors
     async def handle_ping_command(self, event: AstrMessageEvent):
