@@ -463,6 +463,7 @@ class PkCommandHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("PK 结算", plain)
         self.assertIn("<@OPENID_13> <@OPENID_26> ", plain)
         self.assertIn("🧮 计算过程：2+0+2+6+0+9+2+4+1+5+3+8+2+2+2+2+2 = 52 → 尾数 2（双数）", plain)
+        self.assertIn("单次下注上限：100 额度", plain)
         self.plugin.pk_handler.create_challenge = AsyncMock(
             return_value=("STAKE_TOO_LARGE", {"max": 100}))
         replies = await self.collect(self.plugin.handle_pk_command(event, **params))
@@ -495,6 +496,7 @@ class PkCommandHandlerTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("PK 结算", plain)
                 self.assertIn("结算毫秒时间戳：2026-09-24 15:38:22.222", plain)
                 self.assertIn("🧮 计算过程：2+0+2+6+0+9+2+4+1+5+3+8+2+2+2+2+2 = 52 → 尾数 2（双数）", plain)
+                self.assertIn("单次下注上限：100 额度", plain)
                 self.assertIn("网站ID 13（胜）→ 600", plain)
                 self.assertIn("网站ID 26（负）→ 400", plain)
 

@@ -240,7 +240,15 @@ class NewApiSuitePlugin(Star):
                                       else self.t("pk.balance_unavailable")),
                       loser_balance=(self._fmt_quota(loser_balance)
                                      if loser_balance is not None
-                                     else self.t("pk.balance_unavailable")))
+                                     else self.t("pk.balance_unavailable"))) \
+            + (self._pk_max_hint() or "")
+
+    def _pk_max_hint(self) -> str:
+        """下注上限提示；配置为 0（不限）时返回空串。"""
+        max_stake = float(config_get(self.config, 'pk_settings.max_stake', 100) or 0)
+        if max_stake <= 0:
+            return ""
+        return "\n" + self.t("pk.max_hint", max=self._fmt_quota(max_stake))
 
     async def _pk_at_identities(self, event: AstrMessageEvent, sites) -> list:
         """按平台取网站 ID 对应的可 @身份：官机只取 OpenID，野机只取 QQ 号。"""
