@@ -1,7 +1,8 @@
-"""Scoped QQ member-mention normalization and identity-free diagnostics.
+"""QQ member normalization, command-only wake gates and safe diagnostics.
 
-AstrBot 4.28.1 already registers the SDK group parsers. These instance hooks
-operate after SDK parsing and before event submission; they never alter login.
+AstrBot 4.28.1 already registers SDK group parsers. Instance hooks normalize
+members before submission; reversible synchronous command-filter hooks admit
+bare group commands without permanently opening the default LLM wake gate.
 """
 import asyncio
 import contextvars
@@ -17,6 +18,35 @@ _MARKUP = re.compile(r'<@!?([A-Za-z0-9_-]+)>|<qqbot-at-user\s+id=[\"\']([A-Za-z0
 _COMMAND = re.compile(r'^/?(提及诊断|调整余额|查余额|查询|打劫)(?=\s|<|$)')
 _CONTEXT = contextvars.ContextVar('newapi_qq_mention_context', default=None)
 _MISSING = object()
+
+
+def is_bare_group_command(event, command_filter):
+    """Admit only exact registered commands from SDK-backed QQ group events."""
+    from astrbot.api.message_components import AtAll, Reply
+    from astrbot.core.platform.message_type import MessageType
+    from botpy.message import GroupMessage
+
+    if event.get_platform_name() != 'qq_official' or event.is_at_or_wake_command:
+        return False
+    message = event.message_obj
+    raw = getattr(message, 'raw_message', None)
+    if (message.type != MessageType.GROUP_MESSAGE
+            or not isinstance(raw, GroupMessage)
+            or not raw.group_openid
+            or str(raw.group_openid) != str(event.get_group_id())):
+        return False
+    # Keep native mention/reply semantics. Member mentions are valid arguments,
+    # but a leading mention of another member must not address this bot.
+    segments = event.get_messages()
+    if segments and isinstance(segments[0], At):
+        return False
+    if any(isinstance(item, (AtAll, Reply)) or (
+            isinstance(item, At) and str(item.qq) in (str(event.get_self_id()), 'all')
+    ) for item in segments):
+        return False
+    text = re.sub(r'\s+', ' ', event.get_message_str().strip())
+    return any(name and (text == name or text.startswith(name + ' '))
+               for name in command_filter.get_complete_command_names())
 
 
 def raw_data(raw):
@@ -116,6 +146,47 @@ class QQMentionCompat:
         self.probe_tasks = set()
         self.probe_after = 0.0
         self.group_probe_times = {}
+        self.wake_patches = []
+        self.bare_filter_matches = 0
+        self.group_event_counts = {}
+
+    def install_bare_command_wake(self):
+        """Temporarily open native command gates, never the default LLM gate."""
+        from astrbot.core.star.filter.command import CommandFilter
+        from astrbot.core.star.filter.command_group import CommandGroupFilter
+        if not self.active or self.wake_patches:
+            return False
+
+        def wrap_filter(original):
+            @wraps(original)
+            def command_filter(filter_obj, event, config):
+                if not self.active or not is_bare_group_command(event, filter_obj):
+                    return original(filter_obj, event, config)
+                previous = event.is_at_or_wake_command
+                event.is_at_or_wake_command = True
+                try:
+                    # Synchronous, with no awaits: no other task sees a fake wake.
+                    # Native custom filters, parsing and exceptions stay intact.
+                    matched = original(filter_obj, event, config)
+                    if matched:
+                        self.bare_filter_matches += 1
+                        if self.bare_filter_matches <= 20:
+                            self.logger.info(
+                                '[NewAPI QQCommand] bare_filter_matched=True '
+                                f'count={self.bare_filter_matches}'
+                            )
+                    return matched
+                finally:
+                    event.is_at_or_wake_command = previous
+            return command_filter
+
+        for filter_class in (CommandFilter, CommandGroupFilter):
+            original = filter_class.filter
+            wrapper = wrap_filter(original)
+            self.wake_patches.append((filter_class, original, wrapper))
+            filter_class.filter = wrapper
+        self.logger.info('[NewAPI QQCommand] bare group command filters enabled')
+        return True
 
     def probe_missing_target(self, event):
         """Observe the current group after a failed target lookup; never send a reply."""
@@ -185,7 +256,16 @@ class QQMentionCompat:
             def build_callback(original, mode):
                 @wraps(original)
                 async def callback(raw):
-                    if not self.active or not isinstance(raw, GroupMessage) or command_name(raw) is None:
+                    if not self.active or not isinstance(raw, GroupMessage):
+                        return await original(raw)
+                    if self.wake_patches:
+                        count = self.group_event_counts.get(mode, 0) + 1
+                        self.group_event_counts[mode] = count
+                        if count in (1, 2, 3, 10, 100, 1000):
+                            self.logger.info(
+                                f'[NewAPI QQReceive] event={mode} count={count}'
+                            )
+                    if command_name(raw) is None:
                         return await original(raw)
                     self.sequence += 1
                     token = _CONTEXT.set((client, raw, mode, self.sequence))
@@ -224,6 +304,10 @@ class QQMentionCompat:
         for task in tuple(self.probe_tasks):
             task.cancel()
         self.group_probe_times.clear()
+        for filter_class, original, wrapper in reversed(self.wake_patches):
+            if filter_class.filter is wrapper:
+                filter_class.filter = original
+        self.wake_patches.clear()
         for client, name, previous, wrapper in reversed(self.patches):
             if getattr(client, name, None) is wrapper:
                 if previous is _MISSING:

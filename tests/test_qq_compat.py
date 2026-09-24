@@ -308,6 +308,39 @@ class QQCompatTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn(sentinel, logs)
         self.assertEqual(self.logger.info.call_count, 61)
 
+    async def test_failed_or_cancelled_initialization_uninstalls_all_hooks(self):
+        from astrbot.core.star.filter.command_group import CommandGroupFilter
+        originals = (CommandFilter.filter, CommandGroupFilter.filter)
+        self.plugin.context = SimpleNamespace(
+            platform_manager=SimpleNamespace(get_insts=lambda: [self.platform]))
+        for failure in (RuntimeError("offline startup failure"), asyncio.CancelledError()):
+            with self.subTest(failure=type(failure).__name__):
+                self.plugin.core.initialize = AsyncMock(side_effect=failure)
+                with self.assertRaises(type(failure)):
+                    await self.plugin.initialize()
+                self.assertIsNone(self.plugin._qq_compat)
+                self.assertEqual((CommandFilter.filter, CommandGroupFilter.filter), originals)
+                for name in ("_commit", "on_group_message_create", "on_group_at_message_create"):
+                    self.assertNotIn(name, self.client.__dict__)
+
+    async def test_receive_logs_cover_non_target_commands_without_identity(self):
+        self.compat.install_bare_command_wake()
+        self.compat.install(self.client)
+        for kind in ("group_at_message_create", "group_message_create"):
+            for _ in range(12):
+                raw, event = await self.deliver(payload("pingapi " + BODY, None), kind)
+                self.assertIs(event.message_obj.raw_message, raw)
+        logs = "\n".join(str(call) for call in self.logger.info.call_args_list)
+        self.assertEqual(logs.count('[NewAPI QQReceive]'), 8)
+        self.assertIn('event=GROUP_MESSAGE_CREATE count=10', logs)
+        self.assertIn('event=GROUP_AT_MESSAGE_CREATE count=10', logs)
+        for secret in (SENDER, GROUP, BODY, "MESSAGE_PRIVATE_SENTINEL"):
+            self.assertNotIn(secret, logs)
+        before = self.logger.info.call_count
+        self.compat.close()
+        await self.deliver(payload("pingapi", None), "group_message_create")
+        self.assertEqual(self.logger.info.call_count, before)
+
     async def test_receive_mode_mock_session_get_only(self):
         _, event = await self.deliver()
         token = SimpleNamespace(access_token=SECRET, app_id="synthetic-app", get_string=lambda: SECRET)

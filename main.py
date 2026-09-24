@@ -371,14 +371,24 @@ class NewApiSuitePlugin(Star):
             return
         if getattr(self, "_qq_compat", None) is None:
             self._qq_compat = QQMentionCompat(logger)
+        self._qq_compat.install_bare_command_wake()
         for platform in manager.get_insts():
             from astrbot.core.platform.sources.qqofficial.qqofficial_platform_adapter import QQOfficialPlatformAdapter
             if isinstance(platform, QQOfficialPlatformAdapter):
                 self._qq_compat.install(platform.get_client())
 
     async def initialize(self):
-        self._install_qq_mention_compat()
-        init_success = await self.core.initialize()
+        try:
+            self._install_qq_mention_compat()
+            init_success = await self.core.initialize()
+        except BaseException:
+            # Installation precedes core startup: failed/cancelled startup must
+            # not leave class-level command gates or client callbacks behind.
+            compat = getattr(self, "_qq_compat", None)
+            if compat is not None:
+                await compat.aclose()
+                self._qq_compat = None
+            raise
         if init_success:
             logger.info("[NewAPI Suite] 核心服务初始化成功。" )
         else:
