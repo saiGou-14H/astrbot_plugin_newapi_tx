@@ -530,7 +530,11 @@ class NewApiSuitePlugin(Star):
     @guard_errors
     async def handle_tx_help(self, event: AstrMessageEvent):
         """推送中转站套件指令大全；免 @兼容对普通群消息同样生效。"""
-        yield self._reply(event, self.t("help.header", version=PLUGIN_VERSION) + self.t("help.body"))
+        text = self.t("help.header", version=PLUGIN_VERSION) + self.t("help.body")
+        max_stake = float(config_get(self.config, 'pk_settings.max_stake', 100) or 0)
+        if config_get(self.config, 'pk_settings.enabled', True) and max_stake > 0:
+            text += "\n" + self.t("pk.max_hint", max=self._fmt_quota(max_stake))
+        yield self._reply(event, text)
 
     @filter.command("pingapi")
     @guard_errors
@@ -1329,7 +1333,11 @@ class NewApiSuitePlugin(Star):
             target_identifier = self._resolve_target(event, parts[0])
             amount_text = parts[1]
         else:
-            yield self._reply(event, self.t("pk.usage"))
+            max_stake = float(config_get(self.config, 'pk_settings.max_stake', 100) or 0)
+            usage = self.t("pk.usage")
+            if max_stake > 0:
+                usage += "\n" + self.t("pk.max_hint", max=self._fmt_quota(max_stake))
+            yield self._reply(event, usage)
             return
         if target_identifier is None:
             yield self._reply(event, self.t("common.at_or_id_required"))

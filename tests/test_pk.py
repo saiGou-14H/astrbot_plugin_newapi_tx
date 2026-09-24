@@ -376,7 +376,7 @@ class PkCommandHandlerTests(unittest.IsolatedAsyncioTestCase):
         config = AstrBotConfig.__new__(AstrBotConfig)
         config.update({
             "binding_settings": {"quota_display_ratio": 100},
-            "pk_settings": {"enabled": True, "expiry_seconds": 300},
+            "pk_settings": {"enabled": True, "expiry_seconds": 300, "max_stake": 100},
         })
         self.plugin = object.__new__(NewApiSuitePlugin)
         self.plugin.config = config
@@ -477,6 +477,7 @@ class PkCommandHandlerTests(unittest.IsolatedAsyncioTestCase):
         params = self.parse("PK", event, NewApiSuitePlugin.handle_pk_command)
         replies = await self.collect(self.plugin.handle_pk_command(event, **params))
         self.assertIn("用法", replies[0])
+        self.assertIn("单次下注上限：100 额度", replies[0])
         self.plugin.pk_handler.create_challenge.assert_not_awaited()
 
     async def test_accept_pk_with_and_without_identifier(self):

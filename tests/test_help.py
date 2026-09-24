@@ -74,7 +74,7 @@ class HelpCommandTests(unittest.IsolatedAsyncioTestCase):
         text = replies[0]
         for phrase in ("中转站指令大全", "绑定 网站ID", "签到", "打劫", "PK 网站ID",
                        "接受PK", "抢红包", "个人红包", "调整余额", "查ID", "new-tx",
-                       "pingapi", "提及诊断", "模型情况"):
+                       "pingapi", "提及诊断", "模型情况", "单次下注上限：100 额度"):
             self.assertIn(phrase, text)
 
     async def test_help_alias_and_english(self):
