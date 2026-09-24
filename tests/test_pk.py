@@ -170,6 +170,8 @@ class PkLogicTests(unittest.IsolatedAsyncioTestCase):
         # Challenger: -10000 then +20000 → +10000 net; opponent -10000.
         self.assertEqual(self.balances[CHALLENGER_SITE], 60000)
         self.assertEqual(self.balances[OPPONENT_SITE], 40000)
+        self.assertEqual(details["winner_balance"], 600.0)
+        self.assertEqual(details["loser_balance"], 400.0)
         rows = await self.pending_rows()
         self.assertEqual(rows[0]["status"], "SETTLED")
         self.assertEqual(rows[0]["winner_site"], CHALLENGER_SITE)
@@ -187,6 +189,8 @@ class PkLogicTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(details["challenger_wins"])
         self.assertEqual(self.balances[CHALLENGER_SITE], 40000)
         self.assertEqual(self.balances[OPPONENT_SITE], 60000)
+        self.assertEqual(details["winner_balance"], 600.0)
+        self.assertEqual(details["loser_balance"], 400.0)
 
     async def test_expired_challenge_refunds_and_cannot_be_accepted(self):
         await self.seed()
@@ -302,7 +306,9 @@ class PkCommandHandlerTests(unittest.IsolatedAsyncioTestCase):
                    "stake_raw": 10000, "stake_display": 100.0}
         settled = {"challenger_site": 13, "opponent_site": 26,
                    "winner_site": 13, "loser_site": 26, "stake_raw": 10000,
-                   "pot_display": 200.0, "digit": 3, "challenger_wins": True}
+                   "pot_display": 200.0, "digit": 3, "challenger_wins": True,
+                   "winner_balance": 600.0, "loser_balance": 400.0,
+                   "settled_time": "2026-09-24 15:38:22"}
         self.plugin.pk_handler = SimpleNamespace(
             create_challenge=AsyncMock(return_value=("CREATED", created)),
             accept_challenge=AsyncMock(return_value=("SETTLED", settled)),
@@ -362,6 +368,9 @@ class PkCommandHandlerTests(unittest.IsolatedAsyncioTestCase):
                 self.plugin.pk_handler.accept_challenge.assert_awaited_with(
                     "openid:" + SENDER, expected)
                 self.assertIn("PK 结算", replies[0])
+                self.assertIn("结算时间：2026-09-24 15:38:22", replies[0])
+                self.assertIn("网站ID 13（胜）→ 600", replies[0])
+                self.assertIn("网站ID 26（负）→ 400", replies[0])
 
 
 if __name__ == "__main__":

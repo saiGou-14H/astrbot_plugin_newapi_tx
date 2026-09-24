@@ -323,6 +323,11 @@ class PkLogic:
             (self.ST_SETTLED, self._format_dt(self._now()), winner_site, digit,
              match_id, self.ST_ACCEPTING),
         )
+        winner_data = await self.core.get_api_user_data(winner_site)
+        loser_data = await self.core.get_api_user_data(loser_site)
+        winner_balance = (winner_data.get("quota") / ratio) if winner_data else None
+        loser_balance = (loser_data.get("quota") / ratio) if loser_data else None
+        settled_time = datetime.fromtimestamp(self._now_fn()).strftime("%Y-%m-%d %H:%M:%S")
         return "SETTLED", {
             "match_id": match_id,
             "challenger_site": challenger_site,
@@ -334,6 +339,9 @@ class PkLogic:
             "pot_display": pot_raw / ratio,
             "digit": digit,
             "challenger_wins": challenger_wins,
+            "winner_balance": winner_balance,
+            "loser_balance": loser_balance,
+            "settled_time": settled_time,
         }
 
     async def _fail_settle(self, match_id: int, challenger_site: int,

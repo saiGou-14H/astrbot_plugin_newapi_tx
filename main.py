@@ -1311,9 +1311,18 @@ class NewApiSuitePlugin(Star):
                 reply = self.t("pk.accept.deduct_failed")
             case "SETTLED":
                 parity = self.t("pk.parity_odd" if details['challenger_wins'] else "pk.parity_even")
+                winner_balance = details.get('winner_balance')
+                loser_balance = details.get('loser_balance')
                 reply = self.t("pk.settled", digit=details['digit'], parity=parity,
+                               time=details.get('settled_time', ''),
                                winner=details['winner_site'], loser=details['loser_site'],
-                               pot=self._fmt_quota(details['pot_display']))
+                               pot=self._fmt_quota(details['pot_display']),
+                               winner_balance=(self._fmt_quota(winner_balance)
+                                               if winner_balance is not None
+                                               else self.t("pk.balance_unavailable")),
+                               loser_balance=(self._fmt_quota(loser_balance)
+                                              if loser_balance is not None
+                                              else self.t("pk.balance_unavailable")))
                 await self._refresh_balance_cache(f"site:{details['winner_site']}")
                 await self._refresh_balance_cache(f"site:{details['loser_site']}")
             case "SETTLE_FAILED_REFUNDED":
