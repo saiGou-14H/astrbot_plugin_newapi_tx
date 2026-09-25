@@ -473,6 +473,35 @@ class PkCommandHandlerTests(unittest.IsolatedAsyncioTestCase):
         replies = await self.collect(self.plugin.handle_pk_command(event, **params))
         self.assertIn("已自动应战但未能完成结算", replies[0])
 
+    async def test_pk_rank_lists_today(self):
+        rows = [
+            {"challenger_site": 13, "opponent_site": 26, "stake_raw": 10000,
+             "status": "SETTLED", "winner_site": 13},
+            {"challenger_site": 1, "opponent_site": 13, "stake_raw": 5000,
+             "status": "SETTLED", "winner_site": 1},
+            {"challenger_site": 13, "opponent_site": 1, "stake_raw": 2000,
+             "status": "SETTLED", "winner_site": 13},
+        ]
+        self.plugin.core = SimpleNamespace(execute_query=AsyncMock(return_value=rows))
+        event = await self.event("PK榜")
+        event.is_at_or_wake_command = True
+        command = CommandFilter("PK榜", alias={"pk榜", "PK盈亏", "pk盈亏"})
+        command.init_handler_md(SimpleNamespace(handler=NewApiSuitePlugin.handle_pk_rank))
+        self.assertTrue(command.filter(event, self.plugin.config))
+        replies = await self.collect(self.plugin.handle_pk_rank(event))
+        text = replies[0]
+        self.assertIn("今日 PK 盈亏榜", text)
+        self.assertIn("已结算 3 局", text)
+        self.assertIn("参与玩家 3 人", text)
+        self.assertIn("网站ID 13｜局数 3｜胜 2 负 1｜净 +70", text)
+        self.assertIn("网站ID 1｜局数 2｜胜 1 负 1｜净 +30", text)
+        self.assertIn("网站ID 26｜局数 1｜胜 0 负 1｜净 -100", text)
+
+    async def test_pk_rank_empty_today(self):
+        self.plugin.core = SimpleNamespace(execute_query=AsyncMock(return_value=[]))
+        replies = await self.collect(self.plugin.handle_pk_rank(await self.event("PK榜")))
+        self.assertIn("今天还没有已结算的 PK", replies[0])
+
     async def test_pk_command_usage_without_amount(self):
         event = await self.event("PK 26")
         params = self.parse("PK", event, NewApiSuitePlugin.handle_pk_command)

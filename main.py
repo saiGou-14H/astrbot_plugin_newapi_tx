@@ -1454,6 +1454,64 @@ class NewApiSuitePlugin(Star):
                 event, [details['challenger_site'], details['opponent_site']])
         yield self._reply_with_ats(event, ats, reply)
 
+    @staticmethod
+    def _pk_today_range() -> tuple:
+        """返回今天（东八区）的 UTC 时间区间与本地日期字符串。"""
+        local_now = datetime.utcnow() + timedelta(hours=8)
+        local_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+        utc_start = local_start - timedelta(hours=8)
+        return (
+            utc_start.strftime('%Y-%m-%d %H:%M:%S'),
+            (utc_start + timedelta(days=1)).strftime('%Y-%m-%d %H:%M:%S'),
+            local_start.strftime('%Y-%m-%d'),
+        )
+
+    @filter.command("PK榜", alias={"pk榜", "PK盈亏", "pk盈亏"})
+    @guard_errors
+    async def handle_pk_rank(self, event: AstrMessageEvent):
+        """(娱乐) 今日 PK 盈亏榜：按玩家统计局数/胜负/净盈亏。"""
+        start_s, end_s, date_str = self._pk_today_range()
+        rows = await self.core.execute_query(
+            "SELECT challenger_site, opponent_site, stake_raw, status, winner_site "
+            "FROM newapi_pk_matches WHERE settled_at IS NOT NULL "
+            "AND settled_at >= %s AND settled_at < %s",
+            (start_s, end_s), fetch='all') or []
+        ratio = config_get(self.config, 'binding_settings.quota_display_ratio', 500000) or 1
+        stats = {}
+        for row in rows:
+            if row['status'] != 'SETTLED':
+                continue
+            for site in (int(row['challenger_site']), int(row['opponent_site'])):
+                entry = stats.setdefault(site, {'games': 0, 'wins': 0, 'losses': 0, 'net_raw': 0})
+                entry['games'] += 1
+                if int(row['winner_site']) == site:
+                    entry['wins'] += 1
+                    entry['net_raw'] += int(row['stake_raw'])
+                else:
+                    entry['losses'] += 1
+                    entry['net_raw'] -= int(row['stake_raw'])
+        if not stats:
+            yield self._reply(event, self.t("pk.rank.no_data"))
+            return
+        top_n = max(1, int(config_get(self.config, 'pk_settings.leaderboard_top_n', 10) or 10))
+        ordered = sorted(stats.items(), key=lambda item: item[1]['net_raw'], reverse=True)[:top_n]
+        medals = {1: "🥇 ", 2: "🥈 ", 3: "🥉 "}
+        lines = []
+        for index, (site, entry) in enumerate(ordered, start=1):
+            net_display = self._fmt_quota(entry['net_raw'] / ratio)
+            if entry['net_raw'] >= 0:
+                net_display = "+" + net_display
+            lines.append(self.t(
+                "pk.rank.line", medal=medals.get(index, ""), site=site,
+                games=entry['games'], wins=entry['wins'], losses=entry['losses'],
+                net=net_display,
+            ))
+        total_settled = sum(1 for row in rows if row['status'] == 'SETTLED')
+        total_stake = sum(int(row['stake_raw']) for row in rows if row['status'] == 'SETTLED') * 2
+        summary = self.t("pk.rank.summary", date=date_str, count=total_settled,
+                         total=self._fmt_quota(total_stake / ratio), players=len(stats))
+        yield self._reply(event, summary + "\n" + "\n".join(lines))
+
     @filter.command("榜单")
     @guard_errors
     async def handle_leaderboard(self, event: AstrMessageEvent):

@@ -37,6 +37,7 @@ _TRANSLATIONS = {
             "打劫 网站ID 或 @成员 —— 打劫一次\n"
             "PK 网站ID 金额 —— 发起 PK（5 分钟内应战；挑战管理员自动应战）\n"
             "接受PK [发起人网站ID] —— 应战；时间戳数字和取尾数：双=挑战者胜、单=应战者胜\n"
+            "PK榜 —— 今日 PK 盈亏榜\n"
             "榜单 —— 群余额榜与打劫榜\n"
             "消耗榜 —— 全站 Token 消耗榜\n"
             "\n【红包】\n"
@@ -204,6 +205,9 @@ _TRANSLATIONS = {
         "pk.amount_invalid": "❌ 押注金额必须是大于 0 的有效数字。",
         "pk.stake_too_large": "❌ 单次下注不能超过 {max} 额度。",
         "pk.max_hint": "⚠️ 单次下注上限：{max} 额度（超过将被拒绝）。",
+        "pk.rank.no_data": "🤔 今天还没有已结算的 PK。",
+        "pk.rank.summary": "🏆 今日 PK 盈亏榜（{date}）\n已结算 {count} 局｜押注总流动 {total} 额度｜参与玩家 {players} 人",
+        "pk.rank.line": "{medal}网站ID {site}｜局数 {games}｜胜 {wins} 负 {losses}｜净 {net}",
         "pk.self": "🤦 不能挑战自己。",
         "pk.target_not_found": "❌ 未找到目标 {id} 的绑定记录。",
         "pk.already_pending": "⏳ 你与该目标已有一局待应战的 PK，请等待对方应战或 5 分钟过期。",
@@ -251,6 +255,7 @@ _TRANSLATIONS = {
             "打劫 <website ID> or @member — heist\n"
             "PK <website ID> <amount> — challenge (accept within 5 min; auto-accepted vs admin)\n"
             "接受PK [challenger ID] — sum timestamp digits; even tail = challenger wins\n"
+            "PK榜 — daily PK P&L leaderboard\n"
             "榜单 — balance & heist leaderboards\n"
             "消耗榜 — site-wide token consumption\n"
             "\n[Red packets]\n"
@@ -408,6 +413,9 @@ _TRANSLATIONS = {
         "pk.amount_invalid": "❌ The stake must be a positive finite number.",
         "pk.stake_too_large": "❌ A single stake cannot exceed {max} quota.",
         "pk.max_hint": "⚠️ Max stake per PK: {max} quota (larger stakes are rejected).",
+        "pk.rank.no_data": "🤔 No settled PK today yet.",
+        "pk.rank.summary": "🏆 Daily PK P&L ({date})\nSettled {count} games | total stake flow {total} | {players} players",
+        "pk.rank.line": "{medal}Website ID {site} | games {games} | W {wins} L {losses} | net {net}",
         "pk.self": "🤦 You cannot challenge yourself.",
         "pk.target_not_found": "❌ No binding found for target {id}.",
         "pk.already_pending": "⏳ You already have a pending PK with this opponent. Wait for them to accept or for it to expire.",
