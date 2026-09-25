@@ -1512,25 +1512,29 @@ class NewApiSuitePlugin(Star):
                          total=self._fmt_quota(total_stake / ratio), players=len(stats))
         yield self._reply(event, summary + "\n" + "\n".join(lines))
 
-    @filter.command("PK战绩", alias={"pk战绩"})
-    @guard_errors
-    @require_group_whitelist
-    @require_binding
-    async def handle_pk_history(self, event: AstrMessageEvent):
-        """(娱乐) 查看自己今天的 PK 战绩与明细。"""
-        site = int(event.binding['website_user_id'])
-        start_s, end_s, date_str = self._pk_today_range()
-        rows = await self.core.execute_query(
+    async def _pk_history_rows(self, site: int, today: bool) -> list:
+        """按网站 ID 取 PK 对局行；today=True 仅今天，否则全部历史。"""
+        if today:
+            start_s, end_s, _ = self._pk_today_range()
+            return await self.core.execute_query(
+                "SELECT challenger_site, opponent_site, stake_raw, status, winner_site, "
+                "settled_at, final_ms_digit FROM newapi_pk_matches "
+                "WHERE (challenger_site = %s OR opponent_site = %s) "
+                "AND settled_at IS NOT NULL AND settled_at >= %s AND settled_at < %s "
+                "ORDER BY id", (site, site, start_s, end_s), fetch='all') or []
+        return await self.core.execute_query(
             "SELECT challenger_site, opponent_site, stake_raw, status, winner_site, "
             "settled_at, final_ms_digit FROM newapi_pk_matches "
             "WHERE (challenger_site = %s OR opponent_site = %s) "
-            "AND settled_at IS NOT NULL AND settled_at >= %s AND settled_at < %s "
-            "ORDER BY id", (site, site, start_s, end_s), fetch='all') or []
+            "AND settled_at IS NOT NULL ORDER BY id",
+            (site, site), fetch='all') or []
+
+    async def _pk_history_reply(self, site: int, rows: list, date_str=None) -> str:
+        """组装个人 PK 战绩文案；date_str 为空表示历史总战绩。"""
         ratio = config_get(self.config, 'binding_settings.quota_display_ratio', 500000) or 1
         settled = [r for r in rows if r['status'] == 'SETTLED']
         if not settled:
-            yield self._reply(event, self.t("pk.history.no_data"))
-            return
+            return self.t("pk.history.no_data")
         wins = losses = win_raw = lose_raw = chal = opp = 0
         for row in settled:
             if int(row['challenger_site']) == site:
@@ -1547,12 +1551,15 @@ class NewApiSuitePlugin(Star):
         net_display = self._fmt_quota(net_raw / ratio)
         if net_raw >= 0:
             net_display = "+" + net_display
-        lines = [self.t("pk.history.header", date=date_str, site=site),
-                 self.t("pk.history.stats",
-                        games=len(settled), wins=wins, losses=losses, net=net_display,
-                        win=self._fmt_quota(win_raw / ratio),
-                        lose=self._fmt_quota(lose_raw / ratio),
-                        chal=chal, opp=opp)]
+        if date_str:
+            lines = [self.t("pk.history.header", date=date_str, site=site)]
+        else:
+            lines = [self.t("pk.history.header_all", site=site)]
+        lines.append(self.t("pk.history.stats",
+                            games=len(settled), wins=wins, losses=losses, net=net_display,
+                            win=self._fmt_quota(win_raw / ratio),
+                            lose=self._fmt_quota(lose_raw / ratio),
+                            chal=chal, opp=opp))
         for row in reversed(settled[-5:]):
             other = (int(row['opponent_site']) if int(row['challenger_site']) == site
                      else int(row['challenger_site']))
@@ -1563,7 +1570,28 @@ class NewApiSuitePlugin(Star):
                 stake=self._fmt_quota(int(row['stake_raw']) / ratio),
                 result=result, digit=int(row['final_ms_digit'] or 0),
             ))
-        yield self._reply(event, "\n".join(lines))
+        return "\n".join(lines)
+
+    @filter.command("PK战绩", alias={"pk战绩"})
+    @guard_errors
+    @require_group_whitelist
+    @require_binding
+    async def handle_pk_history(self, event: AstrMessageEvent):
+        """(娱乐) 查看自己今天的 PK 战绩与明细。"""
+        site = int(event.binding['website_user_id'])
+        _, _, date_str = self._pk_today_range()
+        rows = await self._pk_history_rows(site, today=True)
+        yield self._reply(event, await self._pk_history_reply(site, rows, date_str))
+
+    @filter.command("PK总战绩", alias={"pk总战绩"})
+    @guard_errors
+    @require_group_whitelist
+    @require_binding
+    async def handle_pk_total_history(self, event: AstrMessageEvent):
+        """(娱乐) 查看自己历史全部 PK 战绩与明细。"""
+        site = int(event.binding['website_user_id'])
+        rows = await self._pk_history_rows(site, today=False)
+        yield self._reply(event, await self._pk_history_reply(site, rows))
 
     @filter.command("榜单")
     @guard_errors

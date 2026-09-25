@@ -529,6 +529,30 @@ class PkCommandHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("对 网站ID 1｜押 50｜❌ 负｜尾数 7", text)
         self.assertIn("对 网站ID 26｜押 100｜✅ 胜｜尾数 4", text)
 
+    async def test_pk_total_history_lists_all_records(self):
+        rows = [
+            {"challenger_site": 13, "opponent_site": 26, "stake_raw": 10000,
+             "status": "SETTLED", "winner_site": 13,
+             "settled_at": "2026-09-24 03:00:00", "final_ms_digit": 4},
+            {"challenger_site": 1, "opponent_site": 13, "stake_raw": 5000,
+             "status": "SETTLED", "winner_site": 1,
+             "settled_at": "2026-09-25 03:05:00", "final_ms_digit": 7},
+        ]
+        self.plugin.core = SimpleNamespace(
+            get_user_by_identity=AsyncMock(return_value={"website_user_id": 13}),
+            execute_query=AsyncMock(return_value=rows),
+        )
+        event = await self.event("PK总战绩")
+        event.is_at_or_wake_command = True
+        command = CommandFilter("PK总战绩", alias={"pk总战绩"})
+        command.init_handler_md(SimpleNamespace(handler=NewApiSuitePlugin.handle_pk_total_history))
+        self.assertTrue(command.filter(event, self.plugin.config))
+        replies = await self.collect(self.plugin.handle_pk_total_history(event))
+        text = replies[0]
+        self.assertIn("你的 PK 总战绩", text)
+        self.assertIn("局数 2｜胜 1 负 1｜净 +50", text)
+        self.assertIn("对 网站ID 1｜押 50｜❌ 负｜尾数 7", text)
+
     async def test_pk_history_empty_today(self):
         self.plugin.core = SimpleNamespace(
             get_user_by_identity=AsyncMock(return_value={"website_user_id": 13}),
