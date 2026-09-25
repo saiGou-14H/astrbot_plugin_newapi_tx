@@ -38,6 +38,7 @@ _TRANSLATIONS = {
             "PK 网站ID 金额 —— 发起 PK（5 分钟内应战；挑战管理员自动应战）\n"
             "接受PK [发起人网站ID] —— 应战；时间戳数字和取尾数：双=挑战者胜、单=应战者胜\n"
             "PK榜 —— 今日 PK 盈亏榜\n"
+            "PK战绩 —— 我的今日 PK 数据\n"
             "榜单 —— 群余额榜与打劫榜\n"
             "消耗榜 —— 全站 Token 消耗榜\n"
             "\n【红包】\n"
@@ -208,6 +209,12 @@ _TRANSLATIONS = {
         "pk.rank.no_data": "🤔 今天还没有已结算的 PK。",
         "pk.rank.summary": "🏆 今日 PK 盈亏榜（{date}）\n已结算 {count} 局｜押注总流动 {total} 额度｜参与玩家 {players} 人",
         "pk.rank.line": "{medal}网站ID {site}｜局数 {games}｜胜 {wins} 负 {losses}｜净 {net}",
+        "pk.history.header": "📊 你的今日 PK 战绩（{date}）\n网站ID {site}",
+        "pk.history.stats": "局数 {games}｜胜 {wins} 负 {losses}｜净 {net}\n赢局入账 {win}｜输局支出 {lose}\n作为挑战者 {chal} 局｜作为应战者 {opp} 局\n—— 最近对局（≤5）——",
+        "pk.history.line": "{time}｜对 网站ID {other}｜押 {stake}｜{result}｜尾数 {digit}",
+        "pk.history.win": "✅ 胜",
+        "pk.history.lose": "❌ 负",
+        "pk.history.no_data": "🤔 你今天还没有 PK 记录。",
         "pk.self": "🤦 不能挑战自己。",
         "pk.target_not_found": "❌ 未找到目标 {id} 的绑定记录。",
         "pk.already_pending": "⏳ 你与该目标已有一局待应战的 PK，请等待对方应战或 5 分钟过期。",
@@ -256,6 +263,7 @@ _TRANSLATIONS = {
             "PK <website ID> <amount> — challenge (accept within 5 min; auto-accepted vs admin)\n"
             "接受PK [challenger ID] — sum timestamp digits; even tail = challenger wins\n"
             "PK榜 — daily PK P&L leaderboard\n"
+            "PK战绩 — your PK data today\n"
             "榜单 — balance & heist leaderboards\n"
             "消耗榜 — site-wide token consumption\n"
             "\n[Red packets]\n"
@@ -416,6 +424,12 @@ _TRANSLATIONS = {
         "pk.rank.no_data": "🤔 No settled PK today yet.",
         "pk.rank.summary": "🏆 Daily PK P&L ({date})\nSettled {count} games | total stake flow {total} | {players} players",
         "pk.rank.line": "{medal}Website ID {site} | games {games} | W {wins} L {losses} | net {net}",
+        "pk.history.header": "📊 Your PK today ({date})\nWebsite ID {site}",
+        "pk.history.stats": "Games {games} | W {wins} L {losses} | net {net}\nWon {win} | Lost {lose}\nAs challenger {chal} | as acceptor {opp}\n— recent games (≤5) —",
+        "pk.history.line": "{time} | vs Website ID {other} | stake {stake} | {result} | digit {digit}",
+        "pk.history.win": "✅ W",
+        "pk.history.lose": "❌ L",
+        "pk.history.no_data": "🤔 You have no PK records today.",
         "pk.self": "🤦 You cannot challenge yourself.",
         "pk.target_not_found": "❌ No binding found for target {id}.",
         "pk.already_pending": "⏳ You already have a pending PK with this opponent. Wait for them to accept or for it to expire.",

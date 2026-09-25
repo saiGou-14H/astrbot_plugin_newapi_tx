@@ -1512,6 +1512,59 @@ class NewApiSuitePlugin(Star):
                          total=self._fmt_quota(total_stake / ratio), players=len(stats))
         yield self._reply(event, summary + "\n" + "\n".join(lines))
 
+    @filter.command("PK战绩", alias={"pk战绩"})
+    @guard_errors
+    @require_group_whitelist
+    @require_binding
+    async def handle_pk_history(self, event: AstrMessageEvent):
+        """(娱乐) 查看自己今天的 PK 战绩与明细。"""
+        site = int(event.binding['website_user_id'])
+        start_s, end_s, date_str = self._pk_today_range()
+        rows = await self.core.execute_query(
+            "SELECT challenger_site, opponent_site, stake_raw, status, winner_site, "
+            "settled_at, final_ms_digit FROM newapi_pk_matches "
+            "WHERE (challenger_site = %s OR opponent_site = %s) "
+            "AND settled_at IS NOT NULL AND settled_at >= %s AND settled_at < %s "
+            "ORDER BY id", (site, site, start_s, end_s), fetch='all') or []
+        ratio = config_get(self.config, 'binding_settings.quota_display_ratio', 500000) or 1
+        settled = [r for r in rows if r['status'] == 'SETTLED']
+        if not settled:
+            yield self._reply(event, self.t("pk.history.no_data"))
+            return
+        wins = losses = win_raw = lose_raw = chal = opp = 0
+        for row in settled:
+            if int(row['challenger_site']) == site:
+                chal += 1
+            if int(row['opponent_site']) == site:
+                opp += 1
+            if int(row['winner_site']) == site:
+                wins += 1
+                win_raw += int(row['stake_raw'])
+            else:
+                losses += 1
+                lose_raw += int(row['stake_raw'])
+        net_raw = win_raw - lose_raw
+        net_display = self._fmt_quota(net_raw / ratio)
+        if net_raw >= 0:
+            net_display = "+" + net_display
+        lines = [self.t("pk.history.header", date=date_str, site=site),
+                 self.t("pk.history.stats",
+                        games=len(settled), wins=wins, losses=losses, net=net_display,
+                        win=self._fmt_quota(win_raw / ratio),
+                        lose=self._fmt_quota(lose_raw / ratio),
+                        chal=chal, opp=opp)]
+        for row in reversed(settled[-5:]):
+            other = (int(row['opponent_site']) if int(row['challenger_site']) == site
+                     else int(row['challenger_site']))
+            result = self.t("pk.history.win") if int(row['winner_site']) == site else self.t("pk.history.lose")
+            time_str = str(row['settled_at'])[:19] if row['settled_at'] else "-"
+            lines.append(self.t(
+                "pk.history.line", time=time_str, other=other,
+                stake=self._fmt_quota(int(row['stake_raw']) / ratio),
+                result=result, digit=int(row['final_ms_digit'] or 0),
+            ))
+        yield self._reply(event, "\n".join(lines))
+
     @filter.command("榜单")
     @guard_errors
     async def handle_leaderboard(self, event: AstrMessageEvent):
