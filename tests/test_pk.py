@@ -493,6 +493,10 @@ class PkCommandHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("今日 PK 盈亏榜", text)
         self.assertIn("已结算 3 局", text)
         self.assertIn("参与玩家 3 人", text)
+        self.assertIn("盈利 TOP3", text)
+        self.assertIn("亏损 TOP3", text)
+        self.assertLess(text.index("网站ID 13｜局数 3"), text.index("网站ID 1｜局数 2"))
+        self.assertLess(text.index("网站ID 1｜局数 2"), text.index("网站ID 26｜局数 1"))
         self.assertIn("网站ID 13｜局数 3｜胜 2 负 1｜净 +70", text)
         self.assertIn("网站ID 1｜局数 2｜胜 1 负 1｜净 +30", text)
         self.assertIn("网站ID 26｜局数 1｜胜 0 负 1｜净 -100", text)
@@ -552,6 +556,31 @@ class PkCommandHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("你的 PK 总战绩", text)
         self.assertIn("局数 2｜胜 1 负 1｜净 +50", text)
         self.assertIn("对 网站ID 1｜押 50｜❌ 负｜尾数 7", text)
+
+    async def test_pk_history_query_other_by_admin(self):
+        rows = [{"challenger_site": 26, "opponent_site": 13, "stake_raw": 8000,
+                 "status": "SETTLED", "winner_site": 26,
+                 "settled_at": "2026-09-25 04:00:00", "final_ms_digit": 2}]
+        execute_query = AsyncMock(return_value=rows)
+        self.plugin.core = SimpleNamespace(
+            get_user_by_identity=AsyncMock(return_value={"website_user_id": 13}),
+            execute_query=execute_query,
+        )
+        event = await self.event("PK战绩 26")
+        event.role = "admin"
+        replies = await self.collect(self.plugin.handle_pk_history(event, "26"))
+        self.assertIn("网站ID 26", replies[0])
+        self.assertEqual(execute_query.await_count, 1)
+
+    async def test_pk_history_other_id_denied_for_member(self):
+        self.plugin.core = SimpleNamespace(
+            get_user_by_identity=AsyncMock(return_value={"website_user_id": 13}),
+            execute_query=AsyncMock(),
+        )
+        event = await self.event("PK战绩 26")
+        replies = await self.collect(self.plugin.handle_pk_history(event, "26"))
+        self.assertIn("只有管理员", replies[0])
+        self.plugin.core.execute_query.assert_not_awaited()
 
     async def test_pk_history_empty_today(self):
         self.plugin.core = SimpleNamespace(

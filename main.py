@@ -1494,23 +1494,35 @@ class NewApiSuitePlugin(Star):
             yield self._reply(event, self.t("pk.rank.no_data"))
             return
         top_n = max(1, int(config_get(self.config, 'pk_settings.leaderboard_top_n', 10) or 10))
-        ordered = sorted(stats.items(), key=lambda item: item[1]['net_raw'], reverse=True)[:top_n]
         medals = {1: "🥇 ", 2: "🥈 ", 3: "🥉 "}
-        lines = []
-        for index, (site, entry) in enumerate(ordered, start=1):
+
+        def make_line(index, site, entry, with_medal):
             net_display = self._fmt_quota(entry['net_raw'] / ratio)
             if entry['net_raw'] >= 0:
                 net_display = "+" + net_display
-            lines.append(self.t(
-                "pk.rank.line", medal=medals.get(index, ""), site=site,
-                games=entry['games'], wins=entry['wins'], losses=entry['losses'],
-                net=net_display,
-            ))
+            return self.t(
+                "pk.rank.line",
+                medal=medals.get(index, "") if with_medal else "",
+                site=site, games=entry['games'], wins=entry['wins'],
+                losses=entry['losses'], net=net_display,
+            )
+
+        profit = sorted(stats.items(), key=lambda item: item[1]['net_raw'], reverse=True)[:top_n]
+        loss = sorted(stats.items(), key=lambda item: item[1]['net_raw'])[:top_n]
+        profit_lines = [make_line(index, site, entry, True)
+                        for index, (site, entry) in enumerate(profit, start=1)]
+        loss_lines = [make_line(index, site, entry, False)
+                      for index, (site, entry) in enumerate(loss, start=1)]
         total_settled = sum(1 for row in rows if row['status'] == 'SETTLED')
         total_stake = sum(int(row['stake_raw']) for row in rows if row['status'] == 'SETTLED') * 2
         summary = self.t("pk.rank.summary", date=date_str, count=total_settled,
                          total=self._fmt_quota(total_stake / ratio), players=len(stats))
-        yield self._reply(event, summary + "\n" + "\n".join(lines))
+        reply = (summary
+                 + "\n" + self.t("pk.rank.profit_header", n=len(profit_lines))
+                 + "\n" + "\n".join(profit_lines)
+                 + "\n" + self.t("pk.rank.loss_header", n=len(loss_lines))
+                 + "\n" + "\n".join(loss_lines))
+        yield self._reply(event, reply)
 
     async def _pk_history_rows(self, site: int, today: bool) -> list:
         """按网站 ID 取 PK 对局行；today=True 仅今天，否则全部历史。"""
@@ -1576,9 +1588,16 @@ class NewApiSuitePlugin(Star):
     @guard_errors
     @require_group_whitelist
     @require_binding
-    async def handle_pk_history(self, event: AstrMessageEvent):
-        """(娱乐) 查看自己今天的 PK 战绩与明细。"""
-        site = int(event.binding['website_user_id'])
+    async def handle_pk_history(self, event: AstrMessageEvent, arguments: GreedyStr = ""):
+        """(娱乐) 查看 PK 战绩：不传参查自己，传网站ID查指定用户（他人仅管理员）。"""
+        own_site = int(event.binding['website_user_id'])
+        site = self._pk_history_target(event, own_site, arguments)
+        if site is None:
+            yield self._reply(event, self.t("pk.history.id_invalid"))
+            return
+        if site == "DENY":
+            yield self._reply(event, self.t("pk.history.admin_required"))
+            return
         _, _, date_str = self._pk_today_range()
         rows = await self._pk_history_rows(site, today=True)
         yield self._reply(event, await self._pk_history_reply(site, rows, date_str))
@@ -1587,11 +1606,31 @@ class NewApiSuitePlugin(Star):
     @guard_errors
     @require_group_whitelist
     @require_binding
-    async def handle_pk_total_history(self, event: AstrMessageEvent):
-        """(娱乐) 查看自己历史全部 PK 战绩与明细。"""
-        site = int(event.binding['website_user_id'])
+    async def handle_pk_total_history(self, event: AstrMessageEvent, arguments: GreedyStr = ""):
+        """(娱乐) 查看历史全部 PK 战绩：不传参查自己，传网站ID查指定用户（他人仅管理员）。"""
+        own_site = int(event.binding['website_user_id'])
+        site = self._pk_history_target(event, own_site, arguments)
+        if site is None:
+            yield self._reply(event, self.t("pk.history.id_invalid"))
+            return
+        if site == "DENY":
+            yield self._reply(event, self.t("pk.history.admin_required"))
+            return
         rows = await self._pk_history_rows(site, today=False)
         yield self._reply(event, await self._pk_history_reply(site, rows))
+
+    @staticmethod
+    def _pk_history_target(event: AstrMessageEvent, own_site: int, arguments) -> int | str | None:
+        """解析战绩查询目标：空=自己；纯数字=指定网站ID（他人需管理员）。"""
+        raw = str(arguments or "").strip()
+        if not raw:
+            return own_site
+        target = NewApiSuitePlugin._parse_int_safe(raw)
+        if target is None:
+            return None
+        if target != own_site and not event.is_admin():
+            return "DENY"
+        return target
 
     @filter.command("榜单")
     @guard_errors
