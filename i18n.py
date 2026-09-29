@@ -42,6 +42,10 @@ _TRANSLATIONS = {
             "PK总战绩 [网站ID] —— PK 历史总数据（他人仅管理员）\n"
             "醍醐测智 —— gpt-6-astra 生成 SVG 动画并截图；定时推送在插件配置中设置，钉钉开启加签时需填 SEC 密钥\n"
             "钉钉图片 —— 在图片存储配置中启用 MinIO/S3，PNG 上传并验证公网访问后显示图片；失败会提示并退回文字摘要\n"
+            "QQ 定时推送 —— 插件配置的 QQ 推送群号列表可添加多个群；清空即停止 QQ 推送\n"
+            "醍醐推送会话 —— 在目标群获取可直接填写的推送会话\n"
+            "醍醐推送绑定 群号（AstrBot 管理员）—— 在对应群绑定普通群号与官方群会话；绑定不自动订阅\n"
+            "醍醐推送解绑 群号 / 醍醐推送状态（AstrBot 管理员）—— 解除绑定或检查配置；官方主动消息仍受平台权限与配额限制\n"
             "榜单 —— 群余额榜与打劫榜\n"
             "消耗榜 —— 全站 Token 消耗榜\n"
             "\n【红包】\n"
@@ -228,6 +232,23 @@ _TRANSLATIONS = {
         "tihudace.working": "🎨 已召唤 gpt-6-astra，正在绘制「鹈鹕骑自行车」的 SVG 动画，请稍候…",
         "tihudace.html_missing": "❌ 模型没有返回可渲染的 HTML/SVG 内容。",
         "tihudace.render_failed": "❌ 图片渲染失败（容器可能缺少 Chromium 或渲染超时）。",
+        "tihudace.push.group_only": "请在 QQ 官方普通群或 OneBot 群中执行此指令；不支持私聊或 QQ 频道。",
+        "tihudace.push.admin_only": "此操作需要 AstrBot 管理员权限（官方机器人使用发送者 OpenID 判断）。",
+        "tihudace.push.bad_number": "请输入有效群号：醍醐推送绑定 群号 / 醍醐推送解绑 群号。OneBot 绑定的群号必须与当前群一致。",
+        "tihudace.push.bad_store": "群绑定数据格式异常，已停止修改，请联系管理员检查。",
+        "tihudace.push.session": "当前 QQ 群推送会话（可直接填入插件的 QQ 推送群号列表）：\n{session}\n也可在列表填写普通群号，再由 AstrBot 管理员在本群执行：醍醐推送绑定 群号。",
+        "tihudace.push.conflict": "群号别名 {group} 已绑定其他会话；未覆盖。需要更换时先执行：醍醐推送解绑 {group}，再到正确群中绑定。",
+        "tihudace.push.bound": "✅ 已将群号别名 {group} 绑定到当前 QQ 群。\n{state}\n官方接口无法校验普通群号，请确认此群确实对应填写的群号；绑定本身不会立即推送。",
+        "tihudace.push.selected": "该群号已在推送列表中，将在定时任务运行时尝试推送。",
+        "tihudace.push.not_selected": "该群号尚未在推送列表中；请在插件配置 → 醍醐测智定时推送 → QQ 推送群号列表中添加。",
+        "tihudace.push.unbound": "已解除群号别名 {group} 的绑定。要停止推送，请同时从 QQ 推送群号列表移除该群号及其直接会话项。",
+        "tihudace.push.status": "醍醐测智 QQ 推送状态\n定时开关：{enabled}｜间隔：{interval} 分钟\n配置目标：{count}｜可路由群：{ready}（不代表已送达）",
+        "tihudace.push.issue": "目标 {target} 未就绪：{reason}",
+        "tihudace.push.reason.invalid_configuration": "配置项格式错误，请填写群号或完整群会话。",
+        "tihudace.push.reason.platform_unavailable": "对应机器人实例不存在或未启用。",
+        "tihudace.push.reason.invalid_binding": "群绑定数据无效，请解绑后重新绑定。",
+        "tihudace.push.reason.unbound_group_number": "群号尚未绑定；请在对应群执行：醍醐推送绑定 群号。",
+        "tihudace.push.reason.invalid_group_id": "群标识格式与对应平台不匹配。",
         "pk.self": "🤦 不能挑战自己。",
         "pk.target_not_found": "❌ 未找到目标 {id} 的绑定记录。",
         "pk.already_pending": "⏳ 你与该目标已有一局待应战的 PK，请等待对方应战或 5 分钟过期。",
@@ -280,6 +301,10 @@ _TRANSLATIONS = {
             "PK总战绩 [website ID] — all-time PK data (others: admin only)\n"
             "醍醐测智 — gpt-6-astra SVG screenshot; scheduled pushes are configured in plugin settings; signed DingTalk robots require the SEC secret\n"
             "DingTalk images — enable MinIO/S3 in image storage settings; PNG uploads are checked for public access before embedding; failures are reported with a text-only fallback\n"
+            "Scheduled QQ pushes — add multiple groups to the QQ push group list in plugin settings; an empty list stops QQ pushes\n"
+            "醍醐推送会话 — get a direct push session in the intended group\n"
+            "醍醐推送绑定 <group number> (AstrBot admin) — bind the numeric alias to this official group session; binding does not subscribe\n"
+            "醍醐推送解绑 <group number> / 醍醐推送状态 (AstrBot admin) — remove a binding or inspect targets; official proactive-message permissions and quotas still apply\n"
             "榜单 — balance & heist leaderboards\n"
             "消耗榜 — site-wide token consumption\n"
             "\n[Red packets]\n"
@@ -456,6 +481,23 @@ _TRANSLATIONS = {
         "tihudace.working": "🎨 Calling gpt-6-astra to draw the SVG pelican-on-a-bike animation, please wait…",
         "tihudace.html_missing": "❌ The model did not return renderable HTML/SVG content.",
         "tihudace.render_failed": "❌ Image rendering failed (Chromium missing in container or render timed out).",
+        "tihudace.push.group_only": "Run this command in a QQ Official ordinary group or a OneBot group, not a private chat or QQ guild channel.",
+        "tihudace.push.admin_only": "This operation requires AstrBot admin permission (QQ Official identifies admins by sender OpenID).",
+        "tihudace.push.bad_number": "Enter a valid group number: 醍醐推送绑定 <number> / 醍醐推送解绑 <number>. A OneBot number must match the current group.",
+        "tihudace.push.bad_store": "Invalid group binding data; no changes were made. Ask an administrator to inspect it.",
+        "tihudace.push.session": "Current QQ group push session (paste into the QQ push group list):\n{session}\nAlternatively, list the numeric group number and ask an AstrBot admin to run 醍醐推送绑定 <number> in this group.",
+        "tihudace.push.conflict": "Group alias {group} is already bound to another session; it was not overwritten. Run 醍醐推送解绑 {group} first, then bind in the correct group.",
+        "tihudace.push.bound": "✅ Group-number alias {group} is bound to this QQ group.\n{state}\nThe official API cannot verify numeric group numbers. Confirm that this is the intended group; binding does not immediately send a push.",
+        "tihudace.push.selected": "This group number is selected; scheduled jobs will attempt to send here.",
+        "tihudace.push.not_selected": "This group number is not selected. Add it under plugin settings → scheduled Tihudace pushes → QQ push group list.",
+        "tihudace.push.unbound": "Unbound group-number alias {group}. To stop pushes, also remove the number and any direct session entry from the QQ push group list.",
+        "tihudace.push.status": "Tihudace QQ push status\nSchedule: {enabled} | Interval: {interval} minutes\nSelected targets: {count} | Routable groups: {ready} (not a delivery receipt)",
+        "tihudace.push.issue": "Target {target} is not ready: {reason}",
+        "tihudace.push.reason.invalid_configuration": "Invalid entry; enter a group number or a complete group session.",
+        "tihudace.push.reason.platform_unavailable": "The corresponding bot instance is missing or disabled.",
+        "tihudace.push.reason.invalid_binding": "Invalid binding data; unbind and bind again.",
+        "tihudace.push.reason.unbound_group_number": "Unbound group number; run 醍醐推送绑定 <number> in the intended group.",
+        "tihudace.push.reason.invalid_group_id": "The group identifier does not match this platform's format.",
         "pk.self": "🤦 You cannot challenge yourself.",
         "pk.target_not_found": "❌ No binding found for target {id}.",
         "pk.already_pending": "⏳ You already have a pending PK with this opponent. Wait for them to accept or for it to expire.",

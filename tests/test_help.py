@@ -101,6 +101,13 @@ class HelpCommandTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("DingTalk images", replies[0])
         self.assertIn("checked for public access", replies[0])
         self.assertIn("text-only fallback", replies[0])
+        for name in ('醍醐推送会话', '醍醐推送绑定', '醍醐推送解绑', '醍醐推送状态'):
+            self.assertIn(name, chinese[0])
+            self.assertIn(name, replies[0])
+        self.assertIn('QQ 推送群号列表可添加多个群', chinese[0])
+        self.assertIn('清空即停止 QQ 推送', chinese[0])
+        self.assertIn('add multiple groups', replies[0])
+        self.assertIn('an empty list stops QQ pushes', replies[0])
 
 
 if __name__ == "__main__":

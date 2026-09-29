@@ -224,7 +224,7 @@
         "items": {
             "scheduled_enabled": { "description": "是否启用定时测智商", "type": "bool", "default": false },
             "interval_minutes": { "description": "推送间隔（分钟，仅支持 15/30/60/120/180/360/720/1440）", "type": "int", "default": 360 },
-            "push_targets": { "description": "QQ 群推送目标列表", "type": "list", "default": [] },
+            "push_targets": { "description": "QQ 推送群号列表（可添加多个）", "hint": "每项填写一个群号，例如 942692109。QQ 官方机器人须先由 AstrBot 管理员在对应群执行：醍醐推送绑定 942692109；也可填写「醍醐推送会话」返回的完整会话。多个群分别添加，清空列表即停止 QQ 推送；单一 OneBot 平台可直接填群号。", "type": "list", "default": [] },
             "dingtalk_enabled": { "description": "是否启用钉钉机器人 webhook 推送", "type": "bool", "default": false },
             "dingtalk_webhook": { "description": "钉钉机器人 webhook 完整地址（含 access_token）", "type": "string", "default": "" },
             "dingtalk_secret": { "description": "钉钉机器人安全设置中的加签密钥（SEC 开头）；开启加签时必填，不是 webhook 的 access_token", "type": "string", "default": "" }

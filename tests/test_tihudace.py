@@ -180,8 +180,12 @@ class SchedulerTests(unittest.IsolatedAsyncioTestCase):
             add_basic_job=AsyncMock(side_effect=self._add_job),
             delete_job=AsyncMock(side_effect=self._delete_job),
         )
-        self.context = SimpleNamespace(cron_manager=self.cron,
-                                       send_message=AsyncMock(return_value=True))
+        self.qq_platform = SimpleNamespace(meta=lambda: SimpleNamespace(id='offline-onebot', name='aiocqhttp'))
+        self.context = SimpleNamespace(
+            cron_manager=self.cron, send_message=AsyncMock(return_value=True),
+            platform_manager=SimpleNamespace(platform_insts=[self.qq_platform]),
+            get_platform_inst=lambda pid: self.qq_platform if pid == 'offline-onebot' else None,
+        )
         config = AstrBotConfig.__new__(AstrBotConfig)
         config.update({
             "codex_settings": {"prompt_template": "画一个鹈鹕"},
@@ -193,6 +197,7 @@ class SchedulerTests(unittest.IsolatedAsyncioTestCase):
         })
         self.plugin = object.__new__(NewApiSuitePlugin)
         self.plugin.config = config
+        self.plugin.get_kv_data = AsyncMock(return_value={})
         self.plugin._generate_tihudace_png = AsyncMock(return_value=("OK", "/tmp/x.png"))
 
     async def _add_job(self, **kwargs):
@@ -342,6 +347,42 @@ class SchedulerTests(unittest.IsolatedAsyncioTestCase):
                 return_value=SimpleNamespace(status_code=200, json=lambda: {'errcode': 0}))
             await TihudaceScheduler(self.plugin, self.context).run_push_job()
         self.context.send_message.assert_awaited_once()
+
+    async def test_multiple_targets_deduplicate_and_isolate_failures(self):
+        self.plugin.config['tihudace_settings']['push_targets'] = [
+            '123', '456', '123', None, {'enabled': False, 'group_id': '789'}]
+        post = AsyncMock(return_value=SimpleNamespace(status_code=200, json=lambda: {'errcode': 0}))
+        with patch('compat_plugin.qq_push_sender.send_qq_group_image', new_callable=AsyncMock,
+                   side_effect=[RuntimeError('private-error'), True]) as send, patch('httpx.AsyncClient') as factory:
+            factory.return_value.__aenter__.return_value.post = post
+            await TihudaceScheduler(self.plugin, self.context).run_push_job()
+        self.assertEqual(send.await_count, 2)
+        self.assertEqual([c.args[1]['group_id'] for c in send.await_args_list], ['123', '456'])
+        self.assertEqual([c.args[1]['platform_id'] for c in send.await_args_list], ['offline-onebot'] * 2)
+        post.assert_awaited_once()
+
+    async def test_unbound_official_number_skips_qq_but_keeps_dingtalk(self):
+        self.context.platform_manager.platform_insts = [SimpleNamespace(
+            meta=lambda: SimpleNamespace(id='actual-bot-id', name='qq_official'))]
+        self.plugin.config['tihudace_settings']['push_targets'] = ['942692109']
+        post = AsyncMock(return_value=SimpleNamespace(status_code=200, json=lambda: {'errcode': 0}))
+        with patch('compat_plugin.qq_push_sender.send_qq_group_image', new_callable=AsyncMock) as send, patch(
+                'httpx.AsyncClient') as factory:
+            factory.return_value.__aenter__.return_value.post = post
+            await TihudaceScheduler(self.plugin, self.context).run_push_job()
+        send.assert_not_awaited()
+        post.assert_awaited_once()
+
+    async def test_bindings_alone_do_not_subscribe_and_empty_list_stops_qq(self):
+        self.plugin.config['tihudace_settings']['push_targets'] = []
+        self.plugin.get_kv_data.return_value = {'123': {
+            'platform_id': 'offline-onebot', 'platform_type': 'aiocqhttp', 'group_id': '123'}}
+        with patch('compat_plugin.qq_push_sender.send_qq_group_image', new_callable=AsyncMock) as send, patch(
+                'httpx.AsyncClient') as factory:
+            factory.return_value.__aenter__.return_value.post = AsyncMock(
+                return_value=SimpleNamespace(status_code=200, json=lambda: {'errcode': 0}))
+            await TihudaceScheduler(self.plugin, self.context).run_push_job()
+        send.assert_not_awaited()
 
     async def test_run_job_skips_when_generation_fails(self):
         self.plugin._generate_tihudace_png = AsyncMock(return_value=("HTML_MISSING", None))

@@ -19,6 +19,10 @@ from .config_utils import config_get
 from .qq_mentions import official_mention_ids
 from .qq_compat import QQMentionCompat, mention_summary, query_group_receive_mode
 from .pk_logic import PkLogic
+from .qq_push_targets import (
+    BINDINGS_KEY, configured_targets, current_group_route, is_group_number,
+    resolve_targets, route_session,
+)
 
 def load_plugin_version() -> str:
     """
@@ -196,27 +200,34 @@ class TihudaceScheduler:
                 return
             conf = config_get(self.plugin.config, 'tihudace_settings', {}) or {}
             summary = "醍醐测智 | gpt-6-astra 定时绘制完成"
-            for target in conf.get('push_targets', []) or []:
-                if not target.get('enabled', True):
-                    continue
-                await self._send_qq_group(str(target.get('group_id') or ''), summary, png)
+            try:
+                bindings = await self.plugin.get_kv_data(BINDINGS_KEY, {})
+                manager = getattr(self.context, 'platform_manager', None)
+                platforms = getattr(manager, 'platform_insts', [])
+                routes, issues = resolve_targets(conf, bindings, platforms)
+                if issues:
+                    codes = ','.join(sorted({code for _, code in issues}))
+                    logger.warning(f"[醍醐测智] QQ目标未就绪 count={len(issues)} reason={codes}；请检查推送群列表或在目标群执行醍醐推送绑定。")
+            except Exception as e:
+                logger.warning(f"[醍醐测智] QQ目标读取失败: {type(e).__name__}")
+                routes = []
+            for index, route in enumerate(routes, 1):
+                await self._send_qq_group(route, summary, png, index)
             if conf.get('dingtalk_enabled') and conf.get('dingtalk_webhook'):
                 await self._send_dingtalk(str(conf['dingtalk_webhook']), summary, png)
 
-    async def _send_qq_group(self, group_id: str, summary: str, png: str):
-        if not group_id:
-            return
+    async def _send_qq_group(self, route: dict, summary: str, png: str, index: int = 1):
         try:
-            from astrbot.api.event import MessageChain
-            from astrbot.core.platform.message_session import MessageSesion
-            from astrbot.core.platform.message_type import MessageType
-            session = MessageSesion("qq_official", MessageType.GROUP_MESSAGE, group_id)
-            chain = MessageChain().message(summary).file_image(png)
-            sent = await self.context.send_message(session, chain)
-            if not sent:
-                logger.warning(f"[醍醐测智] 向群 {group_id} 推送失败：平台未找到或未发送。")
+            from .qq_push_sender import send_qq_group_image
+            sent = await send_qq_group_image(self.context, route, summary, png)
+            if sent:
+                logger.info(f"[醍醐测智] QQ群推送调用完成 target={index}")
+            else:
+                logger.warning(f"[醍醐测智] QQ群推送未成功 target={index}；请检查平台连接、群绑定或主动消息权限。")
+            return sent
         except Exception as e:
-            logger.error(f"[醍醐测智] 向群推送异常: {type(e).__name__}")
+            logger.error(f"[醍醐测智] QQ群推送异常 target={index}: {type(e).__name__}")
+            return False
 
     async def _send_dingtalk(self, webhook: str, summary: str, png: str) -> bool:
         try:
@@ -751,6 +762,96 @@ class NewApiSuitePlugin(Star):
         if not png:
             return "RENDER_FAILED", None
         return "OK", png
+
+    def _qq_push_reply(self, event, text):
+        result = self._reply(event, text)
+        if hasattr(result, 'use_t2i'):
+            result.use_t2i(False)
+        if hasattr(result, 'use_markdown'):
+            result.use_markdown(False)
+        return result
+
+    @filter.command("醍醐推送会话")
+    @guard_errors
+    async def handle_tihudace_push_session(self, event: AstrMessageEvent):
+        route = current_group_route(event)
+        if route is None:
+            yield self._qq_push_reply(event, self.t('tihudace.push.group_only'))
+            return
+        yield self._qq_push_reply(event, self.t('tihudace.push.session', session=route_session(route)))
+
+    @filter.command("醍醐推送绑定")
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @guard_errors
+    async def handle_tihudace_push_bind(self, event: AstrMessageEvent, group_number: str = ''):
+        if not event.is_admin():
+            yield self._qq_push_reply(event, self.t('tihudace.push.admin_only'))
+            return
+        group_number = group_number.strip()
+        route = current_group_route(event)
+        if route is None:
+            yield self._qq_push_reply(event, self.t('tihudace.push.group_only'))
+            return
+        if not is_group_number(group_number) or (
+                route['platform_type'] == 'aiocqhttp' and route['group_id'] != group_number):
+            yield self._qq_push_reply(event, self.t('tihudace.push.bad_number'))
+            return
+        async with self._kv_lock:
+            bindings = await self.get_kv_data(BINDINGS_KEY, {})
+            if not isinstance(bindings, dict):
+                yield self._qq_push_reply(event, self.t('tihudace.push.bad_store'))
+                return
+            if group_number in bindings and bindings[group_number] != route:
+                yield self._qq_push_reply(event, self.t('tihudace.push.conflict', group=group_number))
+                return
+            bindings = dict(bindings)
+            bindings[group_number] = route
+            await self.put_kv_data(BINDINGS_KEY, bindings)
+        selected, _ = configured_targets(config_get(self.config, 'tihudace_settings', {}) or {})
+        state = self.t('tihudace.push.selected' if group_number in selected else 'tihudace.push.not_selected')
+        yield self._qq_push_reply(event, self.t('tihudace.push.bound', group=group_number, state=state))
+
+    @filter.command("醍醐推送解绑")
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @guard_errors
+    async def handle_tihudace_push_unbind(self, event: AstrMessageEvent, group_number: str = ''):
+        if not event.is_admin():
+            yield self._qq_push_reply(event, self.t('tihudace.push.admin_only'))
+            return
+        group_number = group_number.strip()
+        if not is_group_number(group_number):
+            yield self._qq_push_reply(event, self.t('tihudace.push.bad_number'))
+            return
+        async with self._kv_lock:
+            bindings = await self.get_kv_data(BINDINGS_KEY, {})
+            if not isinstance(bindings, dict):
+                yield self._qq_push_reply(event, self.t('tihudace.push.bad_store'))
+                return
+            bindings = dict(bindings)
+            bindings.pop(group_number, None)
+            await self.put_kv_data(BINDINGS_KEY, bindings)
+        yield self._qq_push_reply(event, self.t('tihudace.push.unbound', group=group_number))
+
+    @filter.command("醍醐推送状态")
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @guard_errors
+    async def handle_tihudace_push_status(self, event: AstrMessageEvent):
+        if not event.is_admin():
+            yield self._qq_push_reply(event, self.t('tihudace.push.admin_only'))
+            return
+        conf = config_get(self.config, 'tihudace_settings', {}) or {}
+        selected, _ = configured_targets(conf)
+        bindings = await self.get_kv_data(BINDINGS_KEY, {})
+        manager = getattr(self.context, 'platform_manager', None)
+        routes, issues = resolve_targets(conf, bindings, getattr(manager, 'platform_insts', []))
+        text = self.t('tihudace.push.status', enabled=bool(conf.get('scheduled_enabled')),
+                      interval=conf.get('interval_minutes', 360), count=len(selected), ready=len(routes))
+        if selected:
+            text += '\n' + '\n'.join(selected)
+        for target, code in issues:
+            reason = self.t('tihudace.push.reason.' + code)
+            text += '\n' + self.t('tihudace.push.issue', target=target or '-', reason=reason)
+        yield self._qq_push_reply(event, text)
 
     @filter.command("醍醐测智")
     @guard_errors
