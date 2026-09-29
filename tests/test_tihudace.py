@@ -244,6 +244,30 @@ class SchedulerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(args[0], "https://oapi.dingtalk.com/robot/send?access_token=x")
         self.assertEqual(kwargs["json"]["msgtype"], "markdown")
 
+    async def test_qq_timestamp_is_beijing_completion_time_shared_by_all_groups(self):
+        from datetime import datetime, timedelta, timezone
+        self.plugin.config['tihudace_settings']['push_targets'] = ['123', '456']
+        # UTC date differs from Beijing date; do not depend on container TZ.
+        instant = datetime(2026, 9, 29, 16, 1, 2, tzinfo=timezone.utc)
+        scheduler = TihudaceScheduler(self.plugin, self.context)
+        scheduler._send_qq_group = AsyncMock(return_value=True)
+        scheduler._send_dingtalk = AsyncMock(return_value=True)
+        with patch('compat_plugin.main.datetime') as clock:
+            clock.now.side_effect = lambda tz: instant.astimezone(tz)
+            async def generate():
+                clock.now.assert_not_called()
+                return 'OK', '/tmp/x.png'
+            self.plugin._generate_tihudace_png.side_effect = generate
+            await scheduler.run_push_job()
+        clock.now.assert_called_once_with(timezone(timedelta(hours=8)))
+        self.assertEqual(scheduler._send_qq_group.await_count, 2)
+        captions = [call.args[1] for call in scheduler._send_qq_group.await_args_list]
+        self.assertEqual(captions[0], captions[1])
+        self.assertEqual(captions[0], '醍醐测智 | gpt-6-astra 定时绘制完成\n'
+                         '生成时间：2026-09-30 00:01:02（北京时间 UTC+8）')
+        self.assertEqual(scheduler._send_dingtalk.await_args.args[1],
+                         '醍醐测智 | gpt-6-astra 定时绘制完成')
+
     async def test_signed_dingtalk_sender_uses_configured_secret(self):
         from urllib.parse import parse_qs, urlsplit
         self.plugin.config['tihudace_settings']['dingtalk_secret'] = 'SEC-test-signing-only'

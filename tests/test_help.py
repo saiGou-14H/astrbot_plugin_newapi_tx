@@ -108,6 +108,8 @@ class HelpCommandTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('清空即停止 QQ 推送', chinese[0])
         self.assertIn('add multiple groups', replies[0])
         self.assertIn('an empty list stops QQ pushes', replies[0])
+        self.assertIn('生成时间（北京时间 UTC+8，同轮各群一致）', chinese[0])
+        self.assertIn('generation time (Beijing time, UTC+8', replies[0])
 
 
 if __name__ == "__main__":

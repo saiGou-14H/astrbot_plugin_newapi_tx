@@ -5,7 +5,7 @@ import re
 import asyncio
 from typing import Any, Dict, Optional, Tuple
 from functools import wraps
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from astrbot.api import logger, AstrBotConfig
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
@@ -200,6 +200,10 @@ class TihudaceScheduler:
                 return
             conf = config_get(self.plugin.config, 'tihudace_settings', {}) or {}
             summary = "醍醐测智 | gpt-6-astra 定时绘制完成"
+            # Capture completion once so all groups identify the same generation.
+            completed_at = datetime.now(timezone(timedelta(hours=8)))
+            qq_summary = (f"{summary}\n"
+                          f"生成时间：{completed_at:%Y-%m-%d %H:%M:%S}（北京时间 UTC+8）")
             try:
                 bindings = await self.plugin.get_kv_data(BINDINGS_KEY, {})
                 manager = getattr(self.context, 'platform_manager', None)
@@ -212,7 +216,7 @@ class TihudaceScheduler:
                 logger.warning(f"[醍醐测智] QQ目标读取失败: {type(e).__name__}")
                 routes = []
             for index, route in enumerate(routes, 1):
-                await self._send_qq_group(route, summary, png, index)
+                await self._send_qq_group(route, qq_summary, png, index)
             if conf.get('dingtalk_enabled') and conf.get('dingtalk_webhook'):
                 await self._send_dingtalk(str(conf['dingtalk_webhook']), summary, png)
 
