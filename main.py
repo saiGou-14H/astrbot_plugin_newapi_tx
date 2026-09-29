@@ -222,14 +222,31 @@ class TihudaceScheduler:
         try:
             import httpx
             from .dingtalk_signing import signed_webhook_url
+            storage = config_get(self.plugin.config, 'image_storage_settings', {}) or {}
+            image_url = None
+            image_failed = False
+            if storage.get('enabled', False):
+                try:
+                    from .image_storage import upload_tihudace_png
+                    image_url = await upload_tihudace_png(png, storage)
+                except Exception as e:
+                    # Storage/HTTP exceptions can contain credentials. Log only type.
+                    logger.warning(f"[醍醐测智] 钉钉图片上传或公开访问校验失败: {type(e).__name__}")
+                    image_failed = True
+            # Sign after the upload so a slow storage request cannot age the signature.
             secret = config_get(self.plugin.config, 'tihudace_settings.dingtalk_secret', '')
             signed_url = signed_webhook_url(webhook, secret)
             now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             model = config_get(self.plugin.config, 'codex_settings.model', 'gpt-6-astra')
             text = (f"### {summary}\n\n"
                     f"- 时间：{now}\n"
-                    f"- 模型：{model}（SVG 动画 HTML）\n"
-                    f"- 钉钉渠道发送文字摘要；QQ 图片是否送达需单独确认。")
+                    f"- 模型：{model}（SVG 动画 HTML）\n")
+            if image_url:
+                text += f"\n![醍醐测智生成图片]({image_url})\n\n[查看原图]({image_url})"
+            elif image_failed:
+                text += "- 图片上传或公开访问校验失败，本次仅发送文字摘要。"
+            else:
+                text += "- 未启用图片存储，本次仅发送文字摘要。"
             async with httpx.AsyncClient(timeout=15, follow_redirects=False) as client:
                 resp = await client.post(signed_url, json={
                     'msgtype': 'markdown',
@@ -244,7 +261,10 @@ class TihudaceScheduler:
                 safe_code = errcode if type(errcode) is int else 'invalid_response'
                 logger.warning(f"[醍醐测智] 钉钉推送失败 HTTP 200 errcode={safe_code}")
                 return False
-            logger.info("[醍醐测智] 钉钉推送已接受 errcode=0")
+            if image_failed:
+                logger.warning("[醍醐测智] 钉钉文字摘要已接受，但图片未发送")
+                return False
+            logger.info(f"[醍醐测智] 钉钉推送已接受 errcode=0 image={'yes' if image_url else 'no'}")
             return True
         except Exception as e:
             # Never log exception text: network errors can contain webhook secrets.
@@ -725,12 +745,8 @@ class NewApiSuitePlugin(Star):
             return "HTML_MISSING", None
         out_dir = os.path.join(self.core._resolve_plugin_data_dir(), 'tihudace')
         os.makedirs(out_dir, exist_ok=True)
-        png_path = os.path.join(out_dir, 'tihudace.png')
-        try:
-            if os.path.exists(png_path):
-                os.remove(png_path)
-        except OSError:
-            pass
+        from uuid import uuid4
+        png_path = os.path.join(out_dir, f'tihudace-{uuid4().hex}.png')
         png = await self._render_html_to_png(html, png_path)
         if not png:
             return "RENDER_FAILED", None

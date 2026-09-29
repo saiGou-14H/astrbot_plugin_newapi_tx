@@ -230,6 +230,19 @@
             "dingtalk_secret": { "description": "钉钉机器人安全设置中的加签密钥（SEC 开头）；开启加签时必填，不是 webhook 的 access_token", "type": "string", "default": "" }
         }
     },
+    "image_storage_settings": {
+        "description": "醍醐测智钉钉图片存储（MinIO/S3；启用后上传 PNG 并验证公网访问，失败会提示并退回文字摘要）",
+        "type": "object",
+        "items": {
+            "enabled": { "description": "启用钉钉图片上传；图片链接可被任何持有链接的人读取", "type": "bool", "default": false },
+            "endpoint": { "description": "S3/MinIO API 根地址（如 https://oss.example.com）", "type": "string", "default": "" },
+            "public_base_url": { "description": "匿名可访问的 HTTPS 根地址；不含桶名、路径或签名参数", "type": "string", "default": "" },
+            "bucket": { "description": "专用图片桶名", "type": "string", "default": "" },
+            "prefix": { "description": "桶内图片前缀；需允许匿名 GetObject，上传账号仅需此前缀 PutObject", "type": "string", "default": "reports" },
+            "access_key": { "description": "专用上传账号 Access Key（不要使用管理员账号）", "type": "string", "default": "" },
+            "secret_key": { "description": "专用上传账号 Secret Key（仅保存在私有配置中）", "type": "string", "default": "" }
+        }
+    },
     "debug_settings": {
         "description": "调试模式（日常使用保持关闭）",
         "type": "object",

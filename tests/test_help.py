@@ -95,6 +95,12 @@ class HelpCommandTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("定时推送在插件配置中设置", chinese[0])
         self.assertIn("钉钉开启加签时需填 SEC 密钥", chinese[0])
         self.assertIn("signed DingTalk robots require the SEC secret", replies[0])
+        self.assertIn("钉钉图片", chinese[0])
+        self.assertIn("MinIO/S3", chinese[0])
+        self.assertIn("失败会提示并退回文字摘要", chinese[0])
+        self.assertIn("DingTalk images", replies[0])
+        self.assertIn("checked for public access", replies[0])
+        self.assertIn("text-only fallback", replies[0])
 
 
 if __name__ == "__main__":

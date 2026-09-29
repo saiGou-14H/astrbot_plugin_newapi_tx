@@ -2,3 +2,4 @@ aiomysql
 aiosqlite
 httpx
 python-dotenv
+minio==7.2.20

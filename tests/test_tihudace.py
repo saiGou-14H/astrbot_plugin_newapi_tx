@@ -120,6 +120,14 @@ class TihudaceHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(images), 1)
         self.plugin.core.codex_chat_completion.assert_awaited_once_with("画一个鹈鹕")
 
+    async def test_concurrent_generation_uses_distinct_files(self):
+        self.plugin.core.codex_chat_completion = AsyncMock(return_value='<svg/>')
+        self.plugin._render_html_to_png = AsyncMock(side_effect=lambda html, path: path)
+        results = await asyncio.gather(self.plugin._generate_tihudace_png(),
+                                       self.plugin._generate_tihudace_png())
+        self.assertEqual([r[0] for r in results], ['OK', 'OK'])
+        self.assertNotEqual(results[0][1], results[1][1])
+
     async def test_model_failure_replies_html_missing(self):
         self.plugin.core.codex_chat_completion = AsyncMock(return_value="抱歉，无法生成。")
         replies = await self.collect(self.plugin.handle_tihudace(await self.event("醍醐测智")))
@@ -269,6 +277,71 @@ class SchedulerTests(unittest.IsolatedAsyncioTestCase):
         output = str(log.mock_calls)
         self.assertNotIn('private-token-sentinel', output)
         self.assertNotIn('SEC-private-sentinel', output)
+
+    async def test_dingtalk_embeds_uploaded_image_and_signs_after_upload(self):
+        storage = {'enabled': True, 'access_key': 'key-private', 'secret_key': 'secret-private'}
+        self.plugin.config['image_storage_settings'] = storage
+        url = 'https://oss.example.com/screens/reports/unique.png'
+        post = AsyncMock(return_value=SimpleNamespace(status_code=200, json=lambda: {'errcode': 0}))
+        order = []
+        async def upload(path, conf):
+            self.assertEqual(path, '/tmp/x.png')
+            self.assertEqual(conf, storage)
+            order.append('upload')
+            return url
+        def sign(webhook, secret):
+            order.append('sign')
+            return webhook
+        with patch('compat_plugin.image_storage.upload_tihudace_png', side_effect=upload), patch(
+                'compat_plugin.dingtalk_signing.signed_webhook_url', side_effect=sign), patch(
+                'httpx.AsyncClient') as factory:
+            factory.return_value.__aenter__.return_value.post = post
+            sent = await TihudaceScheduler(self.plugin, self.context)._send_dingtalk(
+                self.plugin.config['tihudace_settings']['dingtalk_webhook'], 'test', '/tmp/x.png')
+        self.assertTrue(sent)
+        self.assertEqual(order, ['upload', 'sign'])
+        text = post.call_args.kwargs['json']['markdown']['text']
+        self.assertIn(f'![醍醐测智生成图片]({url})', text)
+        self.assertIn(f'[查看原图]({url})', text)
+        for private in ('key-private', 'secret-private', '/tmp/x.png'):
+            self.assertNotIn(private, text)
+
+    async def test_upload_failure_reports_text_fallback_without_image_success(self):
+        self.plugin.config['image_storage_settings'] = {'enabled': True}
+        post = AsyncMock(return_value=SimpleNamespace(status_code=200, json=lambda: {'errcode': 0}))
+        with patch('compat_plugin.image_storage.upload_tihudace_png', new_callable=AsyncMock,
+                   side_effect=RuntimeError('SECRET-sentinel')) as upload, patch(
+                'httpx.AsyncClient') as factory, patch('compat_plugin.main.logger') as log:
+            factory.return_value.__aenter__.return_value.post = post
+            sched = TihudaceScheduler(self.plugin, self.context)
+            sent = await sched._send_dingtalk(
+                self.plugin.config['tihudace_settings']['dingtalk_webhook'], 'test', '/tmp/x.png')
+        self.assertFalse(sent)
+        upload.assert_awaited_once()
+        text = post.call_args.kwargs['json']['markdown']['text']
+        self.assertIn('图片上传或公开访问校验失败', text)
+        self.assertNotIn('![', text)
+        self.assertNotIn('SECRET-sentinel', str(log.mock_calls) + text)
+        log.info.assert_not_called()
+
+    async def test_disabled_storage_sends_text_without_upload(self):
+        post = AsyncMock(return_value=SimpleNamespace(status_code=200, json=lambda: {'errcode': 0}))
+        with patch('compat_plugin.image_storage.upload_tihudace_png', new_callable=AsyncMock) as upload, patch(
+                'httpx.AsyncClient') as factory:
+            factory.return_value.__aenter__.return_value.post = post
+            await TihudaceScheduler(self.plugin, self.context).run_push_job()
+        upload.assert_not_awaited()
+        self.context.send_message.assert_awaited_once()
+        self.assertIn('未启用图片存储', post.call_args.kwargs['json']['markdown']['text'])
+
+    async def test_qq_still_sends_when_image_upload_fails(self):
+        self.plugin.config['image_storage_settings'] = {'enabled': True}
+        with patch('compat_plugin.image_storage.upload_tihudace_png', new_callable=AsyncMock,
+                   side_effect=RuntimeError('upload unavailable')), patch('httpx.AsyncClient') as factory:
+            factory.return_value.__aenter__.return_value.post = AsyncMock(
+                return_value=SimpleNamespace(status_code=200, json=lambda: {'errcode': 0}))
+            await TihudaceScheduler(self.plugin, self.context).run_push_job()
+        self.context.send_message.assert_awaited_once()
 
     async def test_run_job_skips_when_generation_fails(self):
         self.plugin._generate_tihudace_png = AsyncMock(return_value=("HTML_MISSING", None))

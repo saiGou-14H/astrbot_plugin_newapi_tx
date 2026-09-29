@@ -103,6 +103,16 @@ PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s tests -v
 
 中转站指令中英文帮助同步说明醍醐测智的定时推送在插件配置中设置。
 
+## 醍醐测智钉钉图片（2026-09-29）
+
+钉钉定时推送可通过 `image_storage_settings` 启用 MinIO/S3：配置 API 根地址 `endpoint`、公开 HTTPS 根地址 `public_base_url`、专用 `bucket`/`prefix` 和上传账号 `access_key`/`secret_key`。默认关闭，依赖 `minio==7.2.20` 随 requirements 安装；生产密钥只存插件私有配置，禁止提交。钉钉加签仍使用原 `tihudace_settings.dingtalk_secret`，上传验证完成后才签名。
+
+PNG 最大 5 MiB；对象名为 `prefix/YYYY/MM/DD/随机UUID.png`，上传 `Content-Type: image/png`，公开访问验证成功后嵌入 Markdown 图片和原图链接。失败时发送明确的文字提示，函数返回 False，不声称图片发送成功；存储关闭时仍允许文字摘要。QQ 继续发送本地 PNG。手工与定时生成采用独立本地文件名，避免并发覆盖。
+
+生产使用 `https://oss.kunkun.chat`、桶 `astrbot-tihudace`、前缀 `reports`、专用账号 `astrbot-tihudace-uploader`。账号仅可 `PutObject` 到此前缀；匿名只允许此前缀 `GetObject`，不允许列桶或写入。对象生命周期设为 30 天，旧消息图片链接到期会失效。配置文件权限 0600。内网容器名 `minio_jhSj` 含下划线，MinIO 会拒绝其 Host，故使用已验证 HTTPS 域名。
+
+`tests/test_image_storage.py` 覆盖上传/公开读取/错误与配置边界；`tests/test_tihudace.py` 覆盖钉钉图片、失败回退、加签顺序、QQ 独立发送和并发文件；`tests/test_help.py` 校验中英文帮助。离线测试禁止真实网络。线上上传/匿名 GET 成功与钉钉 `errcode=0`/客户端实际显示应分别报告，不互相替代。
+
 ## 审计边界
 
 本次覆盖身份解析及直接关联的指令故障，没有重做经济系统。上游原有打劫次数/日志仍使用 QQ 或网站 ID 作为日志键；同一账号双通道共享限额、日志与远程额度写入的跨系统原子性仍需单独改造与历史数据迁移。当前生产配置只有 OpenID 绑定。不能将本次解析测试视为完整经济系统审计。
