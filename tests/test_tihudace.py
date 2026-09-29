@@ -48,6 +48,14 @@ class ExtractHtmlTests(unittest.TestCase):
     def test_garbage_returns_empty(self):
         self.assertEqual(NewApiSuitePlugin._extract_html('没有代码'), '')
 
+    def test_any_language_fence_and_doctype(self):
+        self.assertEqual(
+            NewApiSuitePlugin._extract_html('```xml\n<svg width="1"/>\n```'),
+            '<svg width="1"/>')
+        self.assertEqual(
+            NewApiSuitePlugin._extract_html('<!DOCTYPE html><html></html>'),
+            '<!DOCTYPE html><html></html>')
+
 
 class TihudaceHandlerTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):

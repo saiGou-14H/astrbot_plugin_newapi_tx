@@ -536,12 +536,13 @@ class NewApiSuitePlugin(Star):
 
     @staticmethod
     def _extract_html(text) -> str:
-        """从模型回复中提取 HTML；支持代码围栏与裸 HTML/SVG。"""
+        """从模型回复中提取 HTML；接受任意语言围栏、裸 HTML/SVG/DOCTYPE。"""
         content = str(text or '').strip()
-        fenced = re.search(r'```(?:html)?\s*([\s\S]*?)```', content, re.IGNORECASE)
+        fenced = re.search(r'```[^\n`]*\s*([\s\S]*?)```', content)
         if fenced:
             content = fenced.group(1).strip()
-        if '<html' in content.lower() or '<svg' in content.lower():
+        lowered = content.lower()
+        if ('<html' in lowered or '<svg' in lowered or '<!doctype' in lowered):
             return content
         return ''
 
