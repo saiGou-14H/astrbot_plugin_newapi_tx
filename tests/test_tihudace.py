@@ -231,6 +231,45 @@ class SchedulerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(args[0], "https://oapi.dingtalk.com/robot/send?access_token=x")
         self.assertEqual(kwargs["json"]["msgtype"], "markdown")
 
+    async def test_signed_dingtalk_sender_uses_configured_secret(self):
+        from urllib.parse import parse_qs, urlsplit
+        self.plugin.config['tihudace_settings']['dingtalk_secret'] = 'SEC-test-signing-only'
+        post = AsyncMock(return_value=SimpleNamespace(status_code=200, json=lambda: {'errcode': 0}))
+        with patch('httpx.AsyncClient') as factory, patch(
+                'compat_plugin.dingtalk_signing.time.time_ns', return_value=1600000000123000000):
+            factory.return_value.__aenter__.return_value.post = post
+            sent = await TihudaceScheduler(self.plugin, self.context)._send_dingtalk(
+                self.plugin.config['tihudace_settings']['dingtalk_webhook'], 'test', '/tmp/x.png')
+        self.assertTrue(sent)
+        query = parse_qs(urlsplit(post.call_args.args[0]).query)
+        self.assertEqual(query['timestamp'], ['1600000000123'])
+        self.assertEqual(query['sign'], ['yN/EMb8xl0s8mZUj5Czzp6WaLGibfvn7EK/RdBUjp2s='])
+        self.assertNotIn('图片已推送', post.call_args.kwargs['json']['markdown']['text'])
+
+    async def test_http_200_business_error_is_not_delivery_success(self):
+        post = AsyncMock(return_value=SimpleNamespace(
+            status_code=200, json=lambda: {'errcode': 310000, 'errmsg': 'not logged'}))
+        with patch('httpx.AsyncClient') as factory, patch('compat_plugin.main.logger') as log:
+            factory.return_value.__aenter__.return_value.post = post
+            sent = await TihudaceScheduler(self.plugin, self.context)._send_dingtalk(
+                self.plugin.config['tihudace_settings']['dingtalk_webhook'], 'test', '/tmp/x.png')
+        self.assertFalse(sent)
+        log.info.assert_not_called()
+        self.assertIn('errcode=310000', str(log.warning.call_args))
+        self.assertNotIn('not logged', str(log.mock_calls))
+
+    async def test_network_errors_do_not_leak_webhook_or_secret(self):
+        self.plugin.config['tihudace_settings']['dingtalk_secret'] = 'SEC-private-sentinel'
+        webhook = 'https://oapi.dingtalk.com/robot/send?access_token=private-token-sentinel'
+        post = AsyncMock(side_effect=httpx.ConnectError(webhook + ' SEC-private-sentinel'))
+        with patch('httpx.AsyncClient') as factory, patch('compat_plugin.main.logger') as log:
+            factory.return_value.__aenter__.return_value.post = post
+            sent = await TihudaceScheduler(self.plugin, self.context)._send_dingtalk(webhook, 'test', '')
+        self.assertFalse(sent)
+        output = str(log.mock_calls)
+        self.assertNotIn('private-token-sentinel', output)
+        self.assertNotIn('SEC-private-sentinel', output)
+
     async def test_run_job_skips_when_generation_fails(self):
         self.plugin._generate_tihudace_png = AsyncMock(return_value=("HTML_MISSING", None))
         sched = TihudaceScheduler(self.plugin, self.context)

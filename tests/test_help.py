@@ -93,6 +93,8 @@ class HelpCommandTests(unittest.IsolatedAsyncioTestCase):
         self.plugin.lang = "zh"
         chinese = [item async for item in self.plugin.handle_tx_help(await self.event("中转站指令"))]
         self.assertIn("定时推送在插件配置中设置", chinese[0])
+        self.assertIn("钉钉开启加签时需填 SEC 密钥", chinese[0])
+        self.assertIn("signed DingTalk robots require the SEC secret", replies[0])
 
 
 if __name__ == "__main__":

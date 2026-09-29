@@ -226,7 +226,8 @@
             "interval_minutes": { "description": "推送间隔（分钟，仅支持 15/30/60/120/180/360/720/1440）", "type": "int", "default": 360 },
             "push_targets": { "description": "QQ 群推送目标列表", "type": "list", "default": [] },
             "dingtalk_enabled": { "description": "是否启用钉钉机器人 webhook 推送", "type": "bool", "default": false },
-            "dingtalk_webhook": { "description": "钉钉机器人 webhook 完整地址（含 access_token）", "type": "string", "default": "" }
+            "dingtalk_webhook": { "description": "钉钉机器人 webhook 完整地址（含 access_token）", "type": "string", "default": "" },
+            "dingtalk_secret": { "description": "钉钉机器人安全设置中的加签密钥（SEC 开头）；开启加签时必填，不是 webhook 的 access_token", "type": "string", "default": "" }
         }
     },
     "debug_settings": {

@@ -218,24 +218,38 @@ class TihudaceScheduler:
         except Exception as e:
             logger.error(f"[醍醐测智] 向群推送异常: {type(e).__name__}")
 
-    async def _send_dingtalk(self, webhook: str, summary: str, png: str):
+    async def _send_dingtalk(self, webhook: str, summary: str, png: str) -> bool:
         try:
             import httpx
+            from .dingtalk_signing import signed_webhook_url
+            secret = config_get(self.plugin.config, 'tihudace_settings.dingtalk_secret', '')
+            signed_url = signed_webhook_url(webhook, secret)
             now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            text = (f"### 醍醐测智 · 定时测智商\n\n"
+            model = config_get(self.plugin.config, 'codex_settings.model', 'gpt-6-astra')
+            text = (f"### {summary}\n\n"
                     f"- 时间：{now}\n"
-                    f"- 模型：gpt-6-astra（SVG 动画 HTML）\n"
-                    f"- 图片已推送至配置的 QQ 群\n"
-                    f"- 钉钉机器人暂不支持直接上传本地图片")
-            async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.post(webhook, json={
+                    f"- 模型：{model}（SVG 动画 HTML）\n"
+                    f"- 钉钉渠道发送文字摘要；QQ 图片是否送达需单独确认。")
+            async with httpx.AsyncClient(timeout=15, follow_redirects=False) as client:
+                resp = await client.post(signed_url, json={
                     'msgtype': 'markdown',
                     'markdown': {'title': summary, 'text': text},
                 })
-            if resp.status_code != 200 or not resp.json().get('errcode') == 0:
+            if resp.status_code != 200:
                 logger.warning(f"[醍醐测智] 钉钉推送失败 HTTP {resp.status_code}")
+                return False
+            body = resp.json()
+            errcode = body.get('errcode') if isinstance(body, dict) else None
+            if type(errcode) is not int or errcode != 0:
+                safe_code = errcode if type(errcode) is int else 'invalid_response'
+                logger.warning(f"[醍醐测智] 钉钉推送失败 HTTP 200 errcode={safe_code}")
+                return False
+            logger.info("[醍醐测智] 钉钉推送已接受 errcode=0")
+            return True
         except Exception as e:
+            # Never log exception text: network errors can contain webhook secrets.
             logger.error(f"[醍醐测智] 钉钉推送异常: {type(e).__name__}")
+            return False
 
 
 @register(
