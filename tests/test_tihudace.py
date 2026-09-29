@@ -27,7 +27,7 @@ if "compat_plugin" not in sys.modules:
         raise ImportError("Cannot locate compat_plugin")
     sys.modules["compat_plugin"] = importlib.util.module_from_spec(spec)
 
-from compat_plugin.main import NewApiSuitePlugin
+from compat_plugin.main import NewApiSuitePlugin, TihudaceScheduler
 
 SENDER = "TIHD_SENDER_PRIVATE_SENTINEL"
 GROUP = "TIHD_GROUP_PRIVATE_SENTINEL"
@@ -156,6 +156,77 @@ class TihudaceHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, out_png)
         self.assertTrue(Path(out_png).exists())
         Path(out_png).unlink(missing_ok=True)
+
+
+class SchedulerTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        guard = patch.object(
+            httpx.AsyncClient, "request", new_callable=AsyncMock,
+            side_effect=AssertionError("Real HTTP is forbidden"),
+        )
+        self.blocked_http = guard.start()
+        self.addCleanup(guard.stop)
+        self.addCleanup(self.blocked_http.assert_not_awaited)
+        self.jobs = {}
+        self.cron = SimpleNamespace(
+            add_basic_job=AsyncMock(side_effect=self._add_job),
+            delete_job=AsyncMock(side_effect=self._delete_job),
+        )
+        self.context = SimpleNamespace(cron_manager=self.cron,
+                                       send_message=AsyncMock(return_value=True))
+        config = AstrBotConfig.__new__(AstrBotConfig)
+        config.update({
+            "codex_settings": {"prompt_template": "画一个鹈鹕"},
+            "tihudace_settings": {
+                "scheduled_enabled": True, "interval_minutes": 60,
+                "push_targets": [{"name": "g", "group_id": "123", "enabled": True}],
+                "dingtalk_enabled": True, "dingtalk_webhook": "https://oapi.dingtalk.com/robot/send?access_token=x",
+            },
+        })
+        self.plugin = object.__new__(NewApiSuitePlugin)
+        self.plugin.config = config
+        self.plugin._generate_tihudace_png = AsyncMock(return_value=("OK", "/tmp/x.png"))
+
+    async def _add_job(self, **kwargs):
+        job = SimpleNamespace(job_id="job-1", **kwargs)
+        self.jobs["job-1"] = kwargs
+        return job
+
+    async def _delete_job(self, job_id):
+        self.jobs.pop(job_id, None)
+
+    async def test_interval_to_cron(self):
+        self.assertEqual(TihudaceScheduler._interval_to_cron(15), "*/15 * * * *")
+        self.assertEqual(TihudaceScheduler._interval_to_cron(360), "0 */6 * * *")
+        with self.assertRaises(ValueError):
+            TihudaceScheduler._interval_to_cron(45)
+
+    async def test_initialize_registers_and_terminate_deletes(self):
+        sched = TihudaceScheduler(self.plugin, self.context)
+        await sched.initialize()
+        self.assertIn("job-1", self.jobs)
+        self.assertEqual(self.jobs["job-1"]["cron_expression"], "0 */1 * * *")
+        await sched.terminate()
+        self.assertNotIn("job-1", self.jobs)
+
+    async def test_run_job_pushes_qq_and_dingtalk(self):
+        sched = TihudaceScheduler(self.plugin, self.context)
+        post = AsyncMock(return_value=SimpleNamespace(
+            status_code=200, json=lambda: {"errcode": 0}))
+        with patch("httpx.AsyncClient") as factory:
+            factory.return_value.__aenter__.return_value.post = post
+            await sched.run_push_job()
+        self.context.send_message.assert_awaited_once()
+        post.assert_awaited_once()
+        args, kwargs = post.call_args
+        self.assertEqual(args[0], "https://oapi.dingtalk.com/robot/send?access_token=x")
+        self.assertEqual(kwargs["json"]["msgtype"], "markdown")
+
+    async def test_run_job_skips_when_generation_fails(self):
+        self.plugin._generate_tihudace_png = AsyncMock(return_value=("HTML_MISSING", None))
+        sched = TihudaceScheduler(self.plugin, self.context)
+        await sched.run_push_job()
+        self.context.send_message.assert_not_awaited()
 
 
 if __name__ == "__main__":

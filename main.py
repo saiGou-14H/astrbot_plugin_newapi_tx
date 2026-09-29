@@ -118,6 +118,116 @@ def guard_errors(f):
     "集成了核心用户管理与娱乐功能的New API插件套件。",
     PLUGIN_VERSION
 )
+class TihudaceScheduler:
+    """醍醐测智定时任务：生成 SVG 图并推送到 QQ 群与钉钉机器人。"""
+
+    PLUGIN_JOB_KEY = "astrbot_plugin_newapi_tx_tihudace_push"
+    PLUGIN_JOB_NAME = "醍醐测智定时推送"
+
+    def __init__(self, plugin, context):
+        self.plugin = plugin
+        self.context = context
+        self._job_id = None
+        self._run_lock = asyncio.Lock()
+
+    async def initialize(self):
+        from astrbot.core.star.filter.command import CommandFilter  # noqa: F401
+        cron_manager = getattr(self.context, "cron_manager", None)
+        if cron_manager is None:
+            logger.warning("当前 AstrBot 未提供 cron_manager，跳过醍醐测智定时推送初始化。")
+            return
+        conf = config_get(self.plugin.config, 'tihudace_settings', {}) or {}
+        if not conf.get('scheduled_enabled', False):
+            return
+        interval = int(conf.get('interval_minutes', 360) or 360)
+        cron_expression = self._interval_to_cron(interval)
+        job = await cron_manager.add_basic_job(
+            name=self.PLUGIN_JOB_NAME,
+            cron_expression=cron_expression,
+            handler=self.run_push_job,
+            description="定时生成醍醐测智 SVG 图片并推送到配置渠道。",
+            payload={"plugin_job_key": self.PLUGIN_JOB_KEY},
+            enabled=True,
+            persistent=False,
+        )
+        self._job_id = job.job_id
+        logger.info(f"[醍醐测智] 定时推送已注册：interval={interval} 分钟, job_id={self._job_id}")
+
+    async def terminate(self):
+        cron_manager = getattr(self.context, "cron_manager", None)
+        if cron_manager is None or not self._job_id:
+            return
+        try:
+            await cron_manager.delete_job(self._job_id)
+            self._job_id = None
+        except Exception as e:
+            logger.warning(f"[醍醐测智] 删除定时任务失败: {type(e).__name__}")
+
+    @staticmethod
+    def _interval_to_cron(interval_minutes: int) -> str:
+        if interval_minutes < 60 and 60 % interval_minutes == 0:
+            return f"*/{interval_minutes} * * * *"
+        if interval_minutes % 60 == 0:
+            hours = interval_minutes // 60
+            if hours < 24 and 24 % hours == 0:
+                return f"0 */{hours} * * *"
+            if hours == 24:
+                return "0 0 * * *"
+        raise ValueError("interval_minutes 仅支持 15/30/60/120/180/360/720/1440。")
+
+    async def run_push_job(self, **_):
+        if self._run_lock.locked():
+            logger.warning("[醍醐测智] 上一次任务尚未完成，本次跳过。")
+            return
+        async with self._run_lock:
+            status, png = await self.plugin._generate_tihudace_png()
+            if status != "OK" or not png:
+                logger.error(f"[醍醐测智] 定时生成失败（{status}），跳过推送。")
+                return
+            conf = config_get(self.plugin.config, 'tihudace_settings', {}) or {}
+            summary = "醍醐测智 | gpt-6-astra 定时绘制完成"
+            for target in conf.get('push_targets', []) or []:
+                if not target.get('enabled', True):
+                    continue
+                await self._send_qq_group(str(target.get('group_id') or ''), summary, png)
+            if conf.get('dingtalk_enabled') and conf.get('dingtalk_webhook'):
+                await self._send_dingtalk(str(conf['dingtalk_webhook']), summary, png)
+
+    async def _send_qq_group(self, group_id: str, summary: str, png: str):
+        if not group_id:
+            return
+        try:
+            from astrbot.api.event import MessageChain
+            from astrbot.core.platform.message_session import MessageSesion
+            from astrbot.core.platform.message_type import MessageType
+            session = MessageSesion("qq_official", MessageType.GROUP_MESSAGE, group_id)
+            chain = MessageChain().message(summary).file_image(png)
+            sent = await self.context.send_message(session, chain)
+            if not sent:
+                logger.warning(f"[醍醐测智] 向群 {group_id} 推送失败：平台未找到或未发送。")
+        except Exception as e:
+            logger.error(f"[醍醐测智] 向群推送异常: {type(e).__name__}")
+
+    async def _send_dingtalk(self, webhook: str, summary: str, png: str):
+        try:
+            import httpx
+            now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            text = (f"### 醍醐测智 · 定时测智商\n\n"
+                    f"- 时间：{now}\n"
+                    f"- 模型：gpt-6-astra（SVG 动画 HTML）\n"
+                    f"- 图片已推送至配置的 QQ 群\n"
+                    f"- 钉钉机器人暂不支持直接上传本地图片")
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.post(webhook, json={
+                    'msgtype': 'markdown',
+                    'markdown': {'title': summary, 'text': text},
+                })
+            if resp.status_code != 200 or not resp.json().get('errcode') == 0:
+                logger.warning(f"[醍醐测智] 钉钉推送失败 HTTP {resp.status_code}")
+        except Exception as e:
+            logger.error(f"[醍醐测智] 钉钉推送异常: {type(e).__name__}")
+
+
 class NewApiSuitePlugin(Star):
     """
     New API 功能套件主插件类，作为功能套件的唯一入口点。
@@ -467,6 +577,11 @@ class NewApiSuitePlugin(Star):
             raise
         if init_success:
             logger.info("[NewAPI Suite] 核心服务初始化成功。" )
+            try:
+                self._tihudace_scheduler = TihudaceScheduler(self, self.context)
+                await self._tihudace_scheduler.initialize()
+            except Exception as e:
+                logger.warning(f"[醍醐测智] 定时推送初始化失败: {type(e).__name__}")
         else:
             logger.error("[NewAPI Suite] 核心服务初始化失败。" )
 
@@ -526,6 +641,9 @@ class NewApiSuitePlugin(Star):
 
     async def terminate(self):
         """Remove owned instance hooks and clear the binding cache on unload."""
+        scheduler = getattr(self, "_tihudace_scheduler", None)
+        if scheduler is not None:
+            await scheduler.terminate()
         compat = getattr(self, "_qq_compat", None)
         if compat is not None:
             await compat.aclose()
@@ -565,22 +683,16 @@ class NewApiSuitePlugin(Star):
             return png_path
         return None
 
-    @filter.command("醍醐测智")
-    @guard_errors
-    @require_group_whitelist
-    async def handle_tihudace(self, event: AstrMessageEvent):
-        """(娱乐) 让 gpt-6-astra 生成 SVG 动画 HTML，渲染成图片发回。"""
+    async def _generate_tihudace_png(self) -> Tuple[str, Optional[str]]:
+        """生成醍醐测智图片；返回 (状态码, png路径)。"""
         conf = config_get(self.config, 'codex_settings', {}) or {}
         prompt = str(conf.get('prompt_template') or '').strip()
         if not prompt:
-            yield self._reply(event, self.t("tihudace.disabled"))
-            return
-        yield self._reply(event, self.t("tihudace.working"))
+            return "DISABLED", None
         content = await self.core.codex_chat_completion(prompt)
         html = self._extract_html(content or '')
         if not html:
-            yield self._reply(event, self.t("tihudace.html_missing"))
-            return
+            return "HTML_MISSING", None
         out_dir = os.path.join(self.core._resolve_plugin_data_dir(), 'tihudace')
         os.makedirs(out_dir, exist_ok=True)
         png_path = os.path.join(out_dir, 'tihudace.png')
@@ -591,6 +703,24 @@ class NewApiSuitePlugin(Star):
             pass
         png = await self._render_html_to_png(html, png_path)
         if not png:
+            return "RENDER_FAILED", None
+        return "OK", png
+
+    @filter.command("醍醐测智")
+    @guard_errors
+    @require_group_whitelist
+    async def handle_tihudace(self, event: AstrMessageEvent):
+        """(娱乐) 让 gpt-6-astra 生成 SVG 动画 HTML，渲染成图片发回。"""
+        conf = config_get(self.config, 'codex_settings', {}) or {}
+        if not str(conf.get('prompt_template') or '').strip():
+            yield self._reply(event, self.t("tihudace.disabled"))
+            return
+        yield self._reply(event, self.t("tihudace.working"))
+        status, png = await self._generate_tihudace_png()
+        if status == "HTML_MISSING":
+            yield self._reply(event, self.t("tihudace.html_missing"))
+            return
+        if status != "OK":
             yield self._reply(event, self.t("tihudace.render_failed"))
             return
         yield event.image_result(png)

@@ -218,6 +218,17 @@
             "prompt_template": { "description": "生成提示词", "type": "text", "default": "创建一个HTML，内容是SVG绘制一个鹈鹕骑自行车的2D动画，你不需要任何测试" }
         }
     },
+    "tihudace_settings": {
+        "description": "醍醐测智定时推送（生成 SVG 图片后推送到指定 QQ 群与钉钉机器人）",
+        "type": "object",
+        "items": {
+            "scheduled_enabled": { "description": "是否启用定时测智商", "type": "bool", "default": false },
+            "interval_minutes": { "description": "推送间隔（分钟，仅支持 15/30/60/120/180/360/720/1440）", "type": "int", "default": 360 },
+            "push_targets": { "description": "QQ 群推送目标列表", "type": "list", "default": [] },
+            "dingtalk_enabled": { "description": "是否启用钉钉机器人 webhook 推送", "type": "bool", "default": false },
+            "dingtalk_webhook": { "description": "钉钉机器人 webhook 完整地址（含 access_token）", "type": "string", "default": "" }
+        }
+    },
     "debug_settings": {
         "description": "调试模式（日常使用保持关闭）",
         "type": "object",
