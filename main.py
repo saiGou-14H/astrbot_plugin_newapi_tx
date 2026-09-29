@@ -534,6 +534,66 @@ class NewApiSuitePlugin(Star):
         logger.info("[NewAPI Suite] KV 绑定缓存已清空。")
 
 
+    @staticmethod
+    def _extract_html(text) -> str:
+        """从模型回复中提取 HTML；支持代码围栏与裸 HTML/SVG。"""
+        content = str(text or '').strip()
+        fenced = re.search(r'```(?:html)?\s*([\s\S]*?)```', content, re.IGNORECASE)
+        if fenced:
+            content = fenced.group(1).strip()
+        if '<html' in content.lower() or '<svg' in content.lower():
+            return content
+        return ''
+
+    async def _render_html_to_png(self, html: str, png_path: str) -> Optional[str]:
+        """用无头 Chromium 把 HTML/SVG 渲染成 PNG（静态首帧）。"""
+        html_path = png_path.rsplit('.', 1)[0] + '.html'
+        try:
+            with open(html_path, 'w', encoding='utf-8') as f:
+                f.write(html)
+            cmd = ['chromium', '--headless=new', '--disable-gpu', '--no-sandbox',
+                   '--hide-scrollbars', '--window-size=1280,800',
+                   f'--screenshot={png_path}', f'file://{html_path}']
+            proc = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+            await asyncio.wait_for(proc.wait(), timeout=60)
+        except Exception as e:
+            logger.warning(f'[醍醐测智] 渲染失败: {type(e).__name__}')
+            return None
+        if os.path.exists(png_path) and os.path.getsize(png_path) > 0:
+            return png_path
+        return None
+
+    @filter.command("醍醐测智")
+    @guard_errors
+    @require_group_whitelist
+    async def handle_tihudace(self, event: AstrMessageEvent):
+        """(娱乐) 让 gpt-6-astra 生成 SVG 动画 HTML，渲染成图片发回。"""
+        conf = config_get(self.config, 'codex_settings', {}) or {}
+        prompt = str(conf.get('prompt_template') or '').strip()
+        if not prompt:
+            yield self._reply(event, self.t("tihudace.disabled"))
+            return
+        yield self._reply(event, self.t("tihudace.working"))
+        content = await self.core.codex_chat_completion(prompt)
+        html = self._extract_html(content or '')
+        if not html:
+            yield self._reply(event, self.t("tihudace.html_missing"))
+            return
+        out_dir = os.path.join(self.core._resolve_plugin_data_dir(), 'tihudace')
+        os.makedirs(out_dir, exist_ok=True)
+        png_path = os.path.join(out_dir, 'tihudace.png')
+        try:
+            if os.path.exists(png_path):
+                os.remove(png_path)
+        except OSError:
+            pass
+        png = await self._render_html_to_png(html, png_path)
+        if not png:
+            yield self._reply(event, self.t("tihudace.render_failed"))
+            return
+        yield event.image_result(png)
+
     @filter.command("中转站指令", alias={"中转站帮助", "指令大全"})
     @guard_errors
     async def handle_tx_help(self, event: AstrMessageEvent):

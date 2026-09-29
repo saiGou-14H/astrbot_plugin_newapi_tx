@@ -221,6 +221,11 @@ _TRANSLATIONS = {
         "pk.history.win": "✅ 胜",
         "pk.history.lose": "❌ 负",
         "pk.history.no_data": "🤔 你今天还没有 PK 记录。",
+        # 醍醐测智
+        "tihudace.disabled": "❌ 醍醐测智未配置：codex_settings.prompt_template 为空。",
+        "tihudace.working": "🎨 已召唤 gpt-6-astra，正在绘制「鹈鹕骑自行车」的 SVG 动画，请稍候…",
+        "tihudace.html_missing": "❌ 模型没有返回可渲染的 HTML/SVG 内容。",
+        "tihudace.render_failed": "❌ 图片渲染失败（容器可能缺少 Chromium 或渲染超时）。",
         "pk.self": "🤦 不能挑战自己。",
         "pk.target_not_found": "❌ 未找到目标 {id} 的绑定记录。",
         "pk.already_pending": "⏳ 你与该目标已有一局待应战的 PK，请等待对方应战或 5 分钟过期。",
@@ -442,6 +447,11 @@ _TRANSLATIONS = {
         "pk.history.win": "✅ W",
         "pk.history.lose": "❌ L",
         "pk.history.no_data": "🤔 You have no PK records today.",
+        # 醍醐测智
+        "tihudace.disabled": "❌ 醍醐测智 is not configured: codex_settings.prompt_template is empty.",
+        "tihudace.working": "🎨 Calling gpt-6-astra to draw the SVG pelican-on-a-bike animation, please wait…",
+        "tihudace.html_missing": "❌ The model did not return renderable HTML/SVG content.",
+        "tihudace.render_failed": "❌ Image rendering failed (Chromium missing in container or render timed out).",
         "pk.self": "🤦 You cannot challenge yourself.",
         "pk.target_not_found": "❌ No binding found for target {id}.",
         "pk.already_pending": "⏳ You already have a pending PK with this opponent. Wait for them to accept or for it to expire.",
@@ -518,6 +528,7 @@ _ERROR_KEYS = frozenset({
     "pk.db_failed",
     "pk.accept.deduct_failed",
     "pk.settle_failed",
+    "tihudace.render_failed",
     "rp.api_error",
     "db_transfer.failed",
 })

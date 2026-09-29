@@ -1066,6 +1066,45 @@ class NewApiCore:
             return response.get("data")
         return None
 
+    async def codex_chat_completion(self, prompt: str) -> Optional[str]:
+        """用 codex_settings 的密钥调 /v1/chat/completions 生成文本（不打印密钥）。"""
+        conf = config_get(self.config, 'codex_settings', {}) or {}
+        key = str(conf.get('api_key') or '').strip()
+        if not key:
+            key = (self.api_access_token or '').replace('Bearer ', '', 1).strip()
+        if not key:
+            logger.warning('[NewAPI Codex] 未配置 codex api_key，且无回退令牌')
+            return None
+        base = str(conf.get('base_url') or self.api_base_url or '').rstrip('/')
+        if not base:
+            return None
+        model = str(conf.get('model') or 'gpt-6-astra')
+        timeout = float(conf.get('timeout_seconds') or 180)
+        payload = {
+            'model': model,
+            'messages': [{'role': 'user', 'content': str(prompt)}],
+            'stream': False,
+        }
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.post(
+                    f'{base}/v1/chat/completions',
+                    headers={'Authorization': f'Bearer {key}', 'Content-Type': 'application/json'},
+                    json=payload,
+                )
+            if resp.status_code != 200:
+                logger.warning(f'[NewAPI Codex] HTTP {resp.status_code}')
+                return None
+            data = resp.json()
+            choices = data.get('choices') or []
+            if not choices:
+                return None
+            content = (choices[0].get('message') or {}).get('content')
+            return content if isinstance(content, str) and content.strip() else None
+        except Exception as e:
+            logger.warning(f'[NewAPI Codex] 请求失败: {type(e).__name__}')
+            return None
+
     async def search_api_users(self, keyword, limit: int = 5) -> Optional[list]:
         """按用户名或绑定邮箱模糊搜索用户（管理员接口）。
 

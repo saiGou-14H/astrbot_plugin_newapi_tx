@@ -207,6 +207,17 @@
             "max_total_display": { "description": "单个红包总额度上限（显示额度）", "type": "float", "default": 100000 }
         }
     },
+    "codex_settings": {
+        "description": "Codex 生图（醍醐测智：让 gpt-6-astra 生成 SVG 动画 HTML 并渲染成图片）",
+        "type": "object",
+        "items": {
+            "api_key": { "description": "调用模型用的 NewAPI 客户端 sk- 密钥；留空回退到 api_settings 管理员令牌", "type": "string", "default": "" },
+            "base_url": { "description": "NewAPI 地址；留空回退到 api_settings.api_base_url", "type": "string", "default": "" },
+            "model": { "description": "生成用的模型名", "type": "string", "default": "gpt-6-astra" },
+            "timeout_seconds": { "description": "模型调用超时（秒）", "type": "int", "default": 180 },
+            "prompt_template": { "description": "生成提示词", "type": "text", "default": "创建一个HTML，内容是SVG绘制一个鹈鹕骑自行车的2D动画，你不需要任何测试" }
+        }
+    },
     "debug_settings": {
         "description": "调试模式（日常使用保持关闭）",
         "type": "object",
