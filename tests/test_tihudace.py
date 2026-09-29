@@ -209,6 +209,15 @@ class SchedulerTests(unittest.IsolatedAsyncioTestCase):
         await sched.terminate()
         self.assertNotIn("job-1", self.jobs)
 
+    async def test_initialize_cleans_stale_jobs(self):
+        stale = SimpleNamespace(job_id="stale-1",
+                                payload={"plugin_job_key": TihudaceScheduler.PLUGIN_JOB_KEY})
+        keep = SimpleNamespace(job_id="keep-1", payload={"plugin_job_key": "other"})
+        self.cron.list_jobs = AsyncMock(return_value=[stale, keep])
+        sched = TihudaceScheduler(self.plugin, self.context)
+        await sched.initialize()
+        self.assertEqual(self.cron.delete_job.call_args_list[0].args[0], "stale-1")
+
     async def test_run_job_pushes_qq_and_dingtalk(self):
         sched = TihudaceScheduler(self.plugin, self.context)
         post = AsyncMock(return_value=SimpleNamespace(

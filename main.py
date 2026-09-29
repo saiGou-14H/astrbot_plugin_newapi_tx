@@ -139,6 +139,7 @@ class TihudaceScheduler:
         conf = config_get(self.plugin.config, 'tihudace_settings', {}) or {}
         if not conf.get('scheduled_enabled', False):
             return
+        await self._cleanup_stale_jobs(cron_manager)
         interval = int(conf.get('interval_minutes', 360) or 360)
         cron_expression = self._interval_to_cron(interval)
         job = await cron_manager.add_basic_job(
@@ -152,6 +153,21 @@ class TihudaceScheduler:
         )
         self._job_id = job.job_id
         logger.info(f"[醍醐测智] 定时推送已注册：interval={interval} 分钟, job_id={self._job_id}")
+
+    async def _cleanup_stale_jobs(self, cron_manager):
+        """清理同 key 的遗留任务，避免重启/重载后重复推送。"""
+        try:
+            jobs = await cron_manager.list_jobs("basic")
+        except Exception as e:
+            logger.warning(f"[醍醐测智] 读取 cron 任务失败，跳过清理: {type(e).__name__}")
+            return
+        for job in jobs or []:
+            payload = getattr(job, "payload", None)
+            if isinstance(payload, dict) and payload.get("plugin_job_key") == self.PLUGIN_JOB_KEY:
+                try:
+                    await cron_manager.delete_job(job.job_id)
+                except Exception:
+                    pass
 
     async def terminate(self):
         cron_manager = getattr(self.context, "cron_manager", None)
