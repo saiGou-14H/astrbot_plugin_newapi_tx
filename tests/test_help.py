@@ -89,6 +89,10 @@ class HelpCommandTests(unittest.IsolatedAsyncioTestCase):
         replies = [item async for item in self.plugin.handle_tx_help(await self.event("中转站指令"))]
         self.assertIn("Command Reference", replies[0])
         self.assertIn("PK <website ID>", replies[0])
+        self.assertIn("scheduled pushes are configured in plugin settings", replies[0])
+        self.plugin.lang = "zh"
+        chinese = [item async for item in self.plugin.handle_tx_help(await self.event("中转站指令"))]
+        self.assertIn("定时推送在插件配置中设置", chinese[0])
 
 
 if __name__ == "__main__":

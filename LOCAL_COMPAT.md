@@ -93,6 +93,16 @@ PYTHONDONTWRITEBYTECODE=1 python -m unittest discover -s tests -v
 - 数据表 `newapi_pk_matches` 双引擎建表，并纳入 `new-tx 导出/导入` 迁移范围。
 - 测试：17 项 PK 专项（奇偶/并发/过期/退款/余额不足/解析），全部离线内存余额账本，无线上额度写入。全套回归 113 项，109 通过、4 项独立 MySQL 跳过。
 
+## 已安装列表丢失的根因修复（2026-09-29）
+
+新增 `TihudaceScheduler` 时，原本属于 `NewApiSuitePlugin(Star)` 的 `@register` 被误放到了调度辅助类上。AstrBot 4.28.1 的旧装饰器会先向 `star_map` 写入元数据；随后真正 Star 子类的 `__init_subclass__` 看到已有条目，只更新类引用，不再 append 到 `star_registry`。因此插件初始化和指令可能运行，但 WebUI 从 `Context.get_all_stars()` 获取的列表缺失。
+
+已在独立新进程复现：修复前 `metadata_in_map=True`、`metadata_in_registry=False`。修复仅把 `@register` 移回插件入口类，调度类保持普通辅助类；不修改 AstrBot 框架、不注入注册表、不靠启动后额外重载补救。此前关于浏览器缓存、平台兼容字段导致缺失的判断没有证据，不是此次根因。
+
+新增 `tests/test_plugin_registration.py`：静态校验注册装饰器只修饰插件入口；两个独立子进程冷导入，断言同一元数据对象同时在 map 与 registry、注册唯一、入口类正确、非 ghost，并验证重复 import 不增加条目。禁止网络，不初始化插件、不启动平台连接或调度器。部署验收必须在容器冷启动后直接检查插件列表，不先调用 reload 接口。
+
+中转站指令中英文帮助同步说明醍醐测智的定时推送在插件配置中设置。
+
 ## 审计边界
 
 本次覆盖身份解析及直接关联的指令故障，没有重做经济系统。上游原有打劫次数/日志仍使用 QQ 或网站 ID 作为日志键；同一账号双通道共享限额、日志与远程额度写入的跨系统原子性仍需单独改造与历史数据迁移。当前生产配置只有 OpenID 绑定。不能将本次解析测试视为完整经济系统审计。

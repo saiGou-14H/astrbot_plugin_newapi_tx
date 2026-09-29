@@ -112,12 +112,6 @@ def guard_errors(f):
                 pass
     return wrapper
 
-@register(
-    "NewAPI_plugin",
-    "Future-404",
-    "集成了核心用户管理与娱乐功能的New API插件套件。",
-    PLUGIN_VERSION
-)
 class TihudaceScheduler:
     """醍醐测智定时任务：生成 SVG 图并推送到 QQ 群与钉钉机器人。"""
 
@@ -244,6 +238,12 @@ class TihudaceScheduler:
             logger.error(f"[醍醐测智] 钉钉推送异常: {type(e).__name__}")
 
 
+@register(
+    "NewAPI_plugin",
+    "Future-404",
+    "集成了核心用户管理与娱乐功能的New API插件套件。",
+    PLUGIN_VERSION
+)
 class NewApiSuitePlugin(Star):
     """
     New API 功能套件主插件类，作为功能套件的唯一入口点。
