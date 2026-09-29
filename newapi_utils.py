@@ -16,6 +16,22 @@ from dotenv import load_dotenv, find_dotenv
 from astrbot.api import logger, AstrBotConfig
 
 
+class CodexGenerationError(RuntimeError):
+    """Stable, credential-free failure contract for Codex generation."""
+
+    CODES = frozenset({
+        'TIMEOUT', 'HTTP_ERROR', 'NETWORK_ERROR', 'INVALID_RESPONSE',
+        'EMPTY_RESPONSE', 'CONFIGURATION_ERROR',
+    })
+
+    def __init__(self, code: str, http_status: Optional[int] = None):
+        self.code = code if isinstance(code, str) and code in self.CODES else 'INVALID_RESPONSE'
+        self.http_status = (
+            http_status if type(http_status) is int and 100 <= http_status <= 599 else None
+        )
+        super().__init__(self.code)
+
+
 class NewApiCore:
     """
     NewAPI 核心工具类。
@@ -1066,44 +1082,104 @@ class NewApiCore:
             return response.get("data")
         return None
 
-    async def codex_chat_completion(self, prompt: str) -> Optional[str]:
-        """用 codex_settings 的密钥调 /v1/chat/completions 生成文本（不打印密钥）。"""
-        conf = config_get(self.config, 'codex_settings', {}) or {}
-        key = str(conf.get('api_key') or '').strip()
-        if not key:
-            key = (self.api_access_token or '').replace('Bearer ', '', 1).strip()
-        if not key:
-            logger.warning('[NewAPI Codex] 未配置 codex api_key，且无回退令牌')
-            return None
-        base = str(conf.get('base_url') or self.api_base_url or '').rstrip('/')
-        if not base:
-            return None
-        model = str(conf.get('model') or 'gpt-6-astra')
-        timeout = float(conf.get('timeout_seconds') or 180)
-        payload = {
-            'model': model,
-            'messages': [{'role': 'user', 'content': str(prompt)}],
-            'stream': False,
-        }
+    async def codex_chat_completion(self, prompt: str) -> str:
+        """Generate text once, with a total deadline and safe, typed failures."""
+        started = time.monotonic()
+        error = None
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                resp = await client.post(
-                    f'{base}/v1/chat/completions',
-                    headers={'Authorization': f'Bearer {key}', 'Content-Type': 'application/json'},
-                    json=payload,
-                )
-            if resp.status_code != 200:
-                logger.warning(f'[NewAPI Codex] HTTP {resp.status_code}')
-                return None
-            data = resp.json()
-            choices = data.get('choices') or []
-            if not choices:
-                return None
-            content = (choices[0].get('message') or {}).get('content')
-            return content if isinstance(content, str) and content.strip() else None
-        except Exception as e:
-            logger.warning(f'[NewAPI Codex] 请求失败: {type(e).__name__}')
-            return None
+            conf = config_get(self.config, 'codex_settings', {}) or {}
+            if not isinstance(conf, dict):
+                raise CodexGenerationError('CONFIGURATION_ERROR')
+            raw_timeout = conf.get('timeout_seconds', 600)
+            if isinstance(raw_timeout, bool) or not isinstance(raw_timeout, (int, float, str)):
+                raise CodexGenerationError('CONFIGURATION_ERROR')
+            try:
+                timeout = float(raw_timeout)
+            except (ValueError, OverflowError):
+                raise CodexGenerationError('CONFIGURATION_ERROR') from None
+            if not math.isfinite(timeout) or not 10 <= timeout <= 600:
+                raise CodexGenerationError('CONFIGURATION_ERROR')
+            key = conf.get('api_key') or self.api_access_token or ''
+            base = conf.get('base_url') or self.api_base_url or ''
+            if not isinstance(key, str) or not isinstance(base, str):
+                raise CodexGenerationError('CONFIGURATION_ERROR')
+            key = key.strip()
+            if key.lower().startswith('bearer '):
+                key = key[7:].strip()
+            base = base.strip().rstrip('/')
+            if not key or not base:
+                raise CodexGenerationError('CONFIGURATION_ERROR')
+            try:
+                url = httpx.URL(f'{base}/v1/chat/completions')
+                if url.scheme not in ('http', 'https') or not url.host:
+                    raise ValueError()
+            except (httpx.InvalidURL, ValueError):
+                raise CodexGenerationError('CONFIGURATION_ERROR') from None
+            payload = {
+                'model': str(conf.get('model') or 'gpt-6-astra'),
+                'messages': [{'role': 'user', 'content': str(prompt)}],
+                'stream': False,
+            }
+
+            def parse_response(resp):
+                # JSON decoding can be CPU-bound; keep it off the event loop so
+                # wait_for can enforce the deadline during parsing as well.
+                if not resp.content or not resp.content.strip():
+                    raise CodexGenerationError('EMPTY_RESPONSE')
+                try:
+                    data = resp.json()
+                except (ValueError, UnicodeError):
+                    raise CodexGenerationError('INVALID_RESPONSE') from None
+                if not isinstance(data, dict) or not isinstance(data.get('choices'), list):
+                    raise CodexGenerationError('INVALID_RESPONSE')
+                choices = data['choices']
+                if not choices:
+                    raise CodexGenerationError('EMPTY_RESPONSE')
+                choice = choices[0]
+                if not isinstance(choice, dict) or not isinstance(choice.get('message'), dict):
+                    raise CodexGenerationError('INVALID_RESPONSE')
+                content = choice['message'].get('content')
+                if not isinstance(content, str):
+                    raise CodexGenerationError('INVALID_RESPONSE')
+                if not content.strip():
+                    raise CodexGenerationError('EMPTY_RESPONSE')
+                return content
+
+            async def request_and_parse():
+                limits = httpx.Timeout(timeout, connect=min(10, timeout),
+                                       write=min(30, timeout), pool=min(30, timeout))
+                async with httpx.AsyncClient(timeout=limits) as client:
+                    resp = await client.post(
+                        url,
+                        headers={'Authorization': f'Bearer {key}', 'Content-Type': 'application/json'},
+                        json=payload,
+                    )
+                    if not resp.is_success:
+                        raise CodexGenerationError('HTTP_ERROR', resp.status_code)
+                    return await asyncio.to_thread(parse_response, resp)
+
+            return await asyncio.wait_for(request_and_parse(), timeout=timeout)
+        except asyncio.CancelledError:
+            raise
+        except CodexGenerationError as exc:
+            error = CodexGenerationError(exc.code, exc.http_status)
+        except (asyncio.TimeoutError, httpx.TimeoutException):
+            error = CodexGenerationError('TIMEOUT')
+        except httpx.HTTPStatusError as exc:
+            error = CodexGenerationError('HTTP_ERROR', exc.response.status_code)
+        except (httpx.InvalidURL, httpx.UnsupportedProtocol):
+            error = CodexGenerationError('CONFIGURATION_ERROR')
+        except httpx.RequestError:
+            error = CodexGenerationError('NETWORK_ERROR')
+        except Exception:
+            error = CodexGenerationError('INVALID_RESPONSE')
+        logger.warning(
+            f'[NewAPI Codex] code={error.code} http_status={error.http_status} '
+            f'elapsed={time.monotonic() - started:.3f}'
+        )
+        # Raise outside the exception handlers: do not retain a request/body-bearing
+        # original exception as __context__ or __cause__.
+        raise error
 
     async def search_api_users(self, keyword, limit: int = 5) -> Optional[list]:
         """按用户名或绑定邮箱模糊搜索用户（管理员接口）。

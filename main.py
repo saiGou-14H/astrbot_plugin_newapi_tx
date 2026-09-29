@@ -12,7 +12,7 @@ from astrbot.api.star import Context, Star, register
 from astrbot.core.platform.sources.aiocqhttp.aiocqhttp_message_event import AiocqhttpMessageEvent
 from astrbot.api.message_components import At
 
-from .newapi_utils import NewApiCore
+from .newapi_utils import NewApiCore, CodexGenerationError
 from .heist_logic import HeistLogic
 from .i18n import translate
 from .config_utils import config_get
@@ -127,6 +127,15 @@ class TihudaceScheduler:
         self.context = context
         self._job_id = None
         self._run_lock = asyncio.Lock()
+        self.last_status = 'IDLE'
+        self._started_at = None
+        self.last_elapsed = 0.0
+
+    def run_status(self):
+        elapsed = self.last_elapsed
+        if self._run_lock.locked() and self._started_at is not None:
+            elapsed = asyncio.get_running_loop().time() - self._started_at
+        return self.last_status, round(elapsed, 1)
 
     async def initialize(self):
         from astrbot.core.star.filter.command import CommandFilter  # noqa: F401
@@ -194,31 +203,62 @@ class TihudaceScheduler:
             logger.warning("[醍醐测智] 上一次任务尚未完成，本次跳过。")
             return
         async with self._run_lock:
-            status, png = await self.plugin._generate_tihudace_png()
-            if status != "OK" or not png:
-                logger.error(f"[醍醐测智] 定时生成失败（{status}），跳过推送。")
-                return
-            conf = config_get(self.plugin.config, 'tihudace_settings', {}) or {}
-            summary = "醍醐测智 | gpt-6-astra 定时绘制完成"
-            # Capture completion once so all groups identify the same generation.
-            completed_at = datetime.now(timezone(timedelta(hours=8)))
-            qq_summary = (f"{summary}\n"
-                          f"生成时间：{completed_at:%Y-%m-%d %H:%M:%S}（北京时间 UTC+8）")
+            self._started_at = asyncio.get_running_loop().time()
+            self.last_status = 'GENERATING'
+            logger.info('[醍醐测智] 定时任务开始：正在请求模型并生成图片。')
             try:
-                bindings = await self.plugin.get_kv_data(BINDINGS_KEY, {})
-                manager = getattr(self.context, 'platform_manager', None)
-                platforms = getattr(manager, 'platform_insts', [])
-                routes, issues = resolve_targets(conf, bindings, platforms)
-                if issues:
-                    codes = ','.join(sorted({code for _, code in issues}))
-                    logger.warning(f"[醍醐测智] QQ目标未就绪 count={len(issues)} reason={codes}；请检查推送群列表或在目标群执行醍醐推送绑定。")
+                self.last_status = await self._execute_push()
+            except asyncio.CancelledError:
+                self.last_status = 'CANCELLED'
+                raise
             except Exception as e:
-                logger.warning(f"[醍醐测智] QQ目标读取失败: {type(e).__name__}")
-                routes = []
-            for index, route in enumerate(routes, 1):
-                await self._send_qq_group(route, qq_summary, png, index)
-            if conf.get('dingtalk_enabled') and conf.get('dingtalk_webhook'):
-                await self._send_dingtalk(str(conf['dingtalk_webhook']), summary, png)
+                self.last_status = 'INTERNAL_ERROR'
+                logger.error(f'[醍醐测智] 定时任务异常: {type(e).__name__}')
+            finally:
+                self.last_elapsed = asyncio.get_running_loop().time() - self._started_at
+                logger.info(f'[醍醐测智] 定时任务结束 status={self.last_status} elapsed={self.last_elapsed:.1f}s')
+
+    async def _execute_push(self):
+        status, png = await self.plugin._generate_tihudace_png()
+        if status != 'OK' or not png:
+            logger.error(f'[醍醐测智] 定时生成失败（{status}），本轮未推送，下个定时周期继续。')
+            return status if status != 'OK' else 'RENDER_FAILED'
+        self.last_status = 'SENDING'
+        elapsed = asyncio.get_running_loop().time() - self._started_at
+        logger.info(f'[醍醐测智] 图片生成完成，开始推送 elapsed={elapsed:.1f}s')
+        conf = config_get(self.plugin.config, 'tihudace_settings', {}) or {}
+        summary = "醍醐测智 | gpt-6-astra 定时绘制完成"
+        # Capture completion once so all groups identify the same generation.
+        completed_at = datetime.now(timezone(timedelta(hours=8)))
+        qq_summary = (f"{summary}\n"
+                      f"生成时间：{completed_at:%Y-%m-%d %H:%M:%S}（北京时间 UTC+8）")
+        failed = False
+        try:
+            bindings = await self.plugin.get_kv_data(BINDINGS_KEY, {})
+            manager = getattr(self.context, 'platform_manager', None)
+            platforms = getattr(manager, 'platform_insts', [])
+            routes, issues = resolve_targets(conf, bindings, platforms)
+            if issues:
+                failed = True
+                codes = ','.join(sorted({code for _, code in issues}))
+                logger.warning(f"[醍醐测智] QQ目标未就绪 count={len(issues)} reason={codes}；请检查推送群列表或在目标群执行醍醐推送绑定。")
+        except Exception as e:
+            logger.warning(f"[醍醐测智] QQ目标读取失败: {type(e).__name__}")
+            routes, failed = [], True
+        sent_count = 0
+        for index, route in enumerate(routes, 1):
+            if await self._send_qq_group(route, qq_summary, png, index):
+                sent_count += 1
+            else:
+                failed = True
+        if conf.get('dingtalk_enabled'):
+            if conf.get('dingtalk_webhook') and await self._send_dingtalk(str(conf['dingtalk_webhook']), summary, png):
+                sent_count += 1
+            else:
+                failed = True
+        if failed:
+            return 'PUSH_FAILED'
+        return 'OK' if sent_count else 'NO_TARGETS'
 
     async def _send_qq_group(self, route: dict, summary: str, png: str, index: int = 1):
         try:
@@ -754,8 +794,13 @@ class NewApiSuitePlugin(Star):
         prompt = str(conf.get('prompt_template') or '').strip()
         if not prompt:
             return "DISABLED", None
-        content = await self.core.codex_chat_completion(prompt)
-        html = self._extract_html(content or '')
+        try:
+            content = await self.core.codex_chat_completion(prompt)
+        except CodexGenerationError as e:
+            return ('MODEL_TIMEOUT' if e.code == 'TIMEOUT' else 'MODEL_FAILED'), None
+        if not content:
+            return 'MODEL_FAILED', None
+        html = self._extract_html(content)
         if not html:
             return "HTML_MISSING", None
         out_dir = os.path.join(self.core._resolve_plugin_data_dir(), 'tihudace')
@@ -850,6 +895,10 @@ class NewApiSuitePlugin(Star):
         routes, issues = resolve_targets(conf, bindings, getattr(manager, 'platform_insts', []))
         text = self.t('tihudace.push.status', enabled=bool(conf.get('scheduled_enabled')),
                       interval=conf.get('interval_minutes', 360), count=len(selected), ready=len(routes))
+        scheduler = getattr(self, '_tihudace_scheduler', None)
+        if scheduler is not None:
+            state, elapsed = scheduler.run_status()
+            text += '\n' + self.t('tihudace.run.status', state=self.t('tihudace.run.' + state), elapsed=elapsed)
         if selected:
             text += '\n' + '\n'.join(selected)
         for target, code in issues:
@@ -868,6 +917,10 @@ class NewApiSuitePlugin(Star):
             return
         yield self._reply(event, self.t("tihudace.working"))
         status, png = await self._generate_tihudace_png()
+        if status in ('MODEL_TIMEOUT', 'MODEL_FAILED'):
+            key = 'tihudace.model_timeout' if status == 'MODEL_TIMEOUT' else 'tihudace.model_failed'
+            yield self._reply(event, self.t(key))
+            return
         if status == "HTML_MISSING":
             yield self._reply(event, self.t("tihudace.html_missing"))
             return

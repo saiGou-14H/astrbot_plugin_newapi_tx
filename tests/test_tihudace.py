@@ -135,6 +135,17 @@ class TihudaceHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("正在绘制", replies[0])
         self.assertIn("没有返回可渲染的 HTML/SVG 内容", replies[1])
 
+    async def test_model_request_failures_are_not_reported_as_bad_html(self):
+        from compat_plugin.newapi_utils import CodexGenerationError
+        for code, phrase in [('TIMEOUT', '模型生成超时'), ('HTTP_ERROR', '模型请求失败')]:
+            with self.subTest(code=code):
+                self.plugin.core.codex_chat_completion = AsyncMock(side_effect=CodexGenerationError(code))
+                self.plugin._render_html_to_png = AsyncMock()
+                replies = await self.collect(self.plugin.handle_tihudace(await self.event('醍醐测智')))
+                self.assertIn(phrase, replies[-1])
+                self.assertNotIn('没有返回可渲染', replies[-1])
+                self.plugin._render_html_to_png.assert_not_awaited()
+
     async def test_disabled_without_prompt(self):
         self.plugin.config["codex_settings"]["prompt_template"] = ""
         replies = await self.collect(self.plugin.handle_tihudace(await self.event("醍醐测智")))
@@ -407,6 +418,50 @@ class SchedulerTests(unittest.IsolatedAsyncioTestCase):
                 return_value=SimpleNamespace(status_code=200, json=lambda: {'errcode': 0}))
             await TihudaceScheduler(self.plugin, self.context).run_push_job()
         send.assert_not_awaited()
+
+    async def test_timeout_releases_lock_and_next_scheduled_run_can_succeed(self):
+        sched = TihudaceScheduler(self.plugin, self.context)
+        sched._send_qq_group = AsyncMock(return_value=True)
+        sched._send_dingtalk = AsyncMock(return_value=True)
+        self.plugin._generate_tihudace_png.side_effect = [('MODEL_TIMEOUT', None), ('OK', '/tmp/x.png')]
+        await sched.run_push_job()
+        self.assertEqual(sched.run_status()[0], 'MODEL_TIMEOUT')
+        self.assertFalse(sched._run_lock.locked())
+        sched._send_qq_group.assert_not_awaited()
+        sched._send_dingtalk.assert_not_awaited()
+        await sched.run_push_job()
+        self.assertEqual(sched.run_status()[0], 'OK')
+        sched._send_qq_group.assert_awaited_once()
+        sched._send_dingtalk.assert_awaited_once()
+
+    async def test_running_status_no_overlap_and_cancellation_releases_lock(self):
+        sched = TihudaceScheduler(self.plugin, self.context)
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        async def generate():
+            entered.set()
+            await release.wait()
+            return 'OK', '/tmp/x.png'
+        self.plugin._generate_tihudace_png.side_effect = generate
+        task = asyncio.create_task(sched.run_push_job())
+        await entered.wait()
+        self.assertEqual(sched.run_status()[0], 'GENERATING')
+        await sched.run_push_job()
+        self.assertEqual(self.plugin._generate_tihudace_png.await_count, 1)
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertEqual(sched.run_status()[0], 'CANCELLED')
+        self.assertFalse(sched._run_lock.locked())
+
+    async def test_unexpected_generation_error_records_failure_without_stuck_lock(self):
+        sched = TihudaceScheduler(self.plugin, self.context)
+        self.plugin._generate_tihudace_png.side_effect = RuntimeError('secret-private-sentinel')
+        with patch('compat_plugin.main.logger') as log:
+            await sched.run_push_job()
+        self.assertEqual(sched.run_status()[0], 'INTERNAL_ERROR')
+        self.assertFalse(sched._run_lock.locked())
+        self.assertNotIn('secret-private-sentinel', str(log.mock_calls))
 
     async def test_run_job_skips_when_generation_fails(self):
         self.plugin._generate_tihudace_png = AsyncMock(return_value=("HTML_MISSING", None))

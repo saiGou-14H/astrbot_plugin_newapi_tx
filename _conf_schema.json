@@ -214,7 +214,7 @@
             "api_key": { "description": "调用模型用的 NewAPI 客户端 sk- 密钥；留空回退到 api_settings 管理员令牌", "type": "string", "default": "" },
             "base_url": { "description": "NewAPI 地址；留空回退到 api_settings.api_base_url", "type": "string", "default": "" },
             "model": { "description": "生成用的模型名", "type": "string", "default": "gpt-6-astra" },
-            "timeout_seconds": { "description": "模型调用超时（秒）", "type": "int", "default": 180 },
+            "timeout_seconds": { "description": "模型请求总超时（秒，10–600；默认 600）。慢速生成可能超过 3 分钟；超时会结束本轮，下个定时周期继续。", "type": "int", "default": 600 },
             "prompt_template": { "description": "生成提示词", "type": "text", "default": "创建一个HTML，内容是SVG绘制一个鹈鹕骑自行车的2D动画，你不需要任何测试" }
         }
     },

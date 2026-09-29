@@ -46,6 +46,7 @@ _TRANSLATIONS = {
             "醍醐推送会话 —— 在目标群获取可直接填写的推送会话\n"
             "醍醐推送绑定 群号（AstrBot 管理员）—— 在对应群绑定普通群号与官方群会话；绑定不自动订阅\n"
             "醍醐推送解绑 群号 / 醍醐推送状态（AstrBot 管理员）—— 解除绑定或检查配置；官方主动消息仍受平台权限与配额限制\n"
+            "醍醐推送状态还可查看最近任务阶段、失败原因与耗时；模型请求默认最多等待 10 分钟，超时后下个周期继续\n"
             "榜单 —— 群余额榜与打劫榜\n"
             "消耗榜 —— 全站 Token 消耗榜\n"
             "\n【红包】\n"
@@ -230,6 +231,22 @@ _TRANSLATIONS = {
         # 醍醐测智
         "tihudace.disabled": "❌ 醍醐测智未配置：codex_settings.prompt_template 为空。",
         "tihudace.working": "🎨 已召唤 gpt-6-astra，正在绘制「鹈鹕骑自行车」的 SVG 动画，请稍候…",
+        "tihudace.model_timeout": "❌ 模型生成超时，本次没有生成图片。请稍后再试；定时任务会在下个周期继续。",
+        "tihudace.model_failed": "❌ 模型请求失败或返回空结果，本次未生成图片；请检查模型服务和插件日志。",
+        "tihudace.run.status": "本次启动后的最近任务：{state}｜耗时：{elapsed} 秒",
+        "tihudace.run.IDLE": "尚未触发",
+        "tihudace.run.GENERATING": "正在生成图片",
+        "tihudace.run.SENDING": "正在推送",
+        "tihudace.run.OK": "各渠道发送调用成功（不代表客户端显示）",
+        "tihudace.run.MODEL_TIMEOUT": "模型生成超时，下个周期继续",
+        "tihudace.run.MODEL_FAILED": "模型请求失败或空结果",
+        "tihudace.run.HTML_MISSING": "模型内容不是 HTML/SVG",
+        "tihudace.run.RENDER_FAILED": "图片渲染失败",
+        "tihudace.run.DISABLED": "生成提示词未配置",
+        "tihudace.run.PUSH_FAILED": "部分或全部推送失败，请查日志",
+        "tihudace.run.NO_TARGETS": "图片已生成，但未配置推送目标",
+        "tihudace.run.CANCELLED": "任务已取消",
+        "tihudace.run.INTERNAL_ERROR": "任务发生异常，请查日志",
         "tihudace.html_missing": "❌ 模型没有返回可渲染的 HTML/SVG 内容。",
         "tihudace.render_failed": "❌ 图片渲染失败（容器可能缺少 Chromium 或渲染超时）。",
         "tihudace.push.group_only": "请在 QQ 官方普通群或 OneBot 群中执行此指令；不支持私聊或 QQ 频道。",
@@ -305,6 +322,7 @@ _TRANSLATIONS = {
             "醍醐推送会话 — get a direct push session in the intended group\n"
             "醍醐推送绑定 <group number> (AstrBot admin) — bind the numeric alias to this official group session; binding does not subscribe\n"
             "醍醐推送解绑 <group number> / 醍醐推送状态 (AstrBot admin) — remove a binding or inspect targets; official proactive-message permissions and quotas still apply\n"
+            "醍醐推送状态 also shows the latest run stage, failure reason and elapsed time; model requests wait up to 10 minutes by default, then continue next cycle after a timeout\n"
             "榜单 — balance & heist leaderboards\n"
             "消耗榜 — site-wide token consumption\n"
             "\n[Red packets]\n"
@@ -479,6 +497,22 @@ _TRANSLATIONS = {
         # 醍醐测智
         "tihudace.disabled": "❌ 醍醐测智 is not configured: codex_settings.prompt_template is empty.",
         "tihudace.working": "🎨 Calling gpt-6-astra to draw the SVG pelican-on-a-bike animation, please wait…",
+        "tihudace.model_timeout": "❌ Model generation timed out; no image was generated. Try again later; scheduled runs continue next cycle.",
+        "tihudace.model_failed": "❌ The model request failed or returned an empty result. Check the model service and plugin logs.",
+        "tihudace.run.status": "Latest run since startup: {state} | Elapsed: {elapsed} seconds",
+        "tihudace.run.IDLE": "not triggered yet",
+        "tihudace.run.GENERATING": "generating image",
+        "tihudace.run.SENDING": "sending messages",
+        "tihudace.run.OK": "all channel send calls succeeded (not client display confirmation)",
+        "tihudace.run.MODEL_TIMEOUT": "model generation timed out; next cycle will continue",
+        "tihudace.run.MODEL_FAILED": "model request failed or returned empty content",
+        "tihudace.run.HTML_MISSING": "model content is not HTML/SVG",
+        "tihudace.run.RENDER_FAILED": "image rendering failed",
+        "tihudace.run.DISABLED": "generation prompt is not configured",
+        "tihudace.run.PUSH_FAILED": "some or all pushes failed; check logs",
+        "tihudace.run.NO_TARGETS": "image generated but no push targets configured",
+        "tihudace.run.CANCELLED": "run cancelled",
+        "tihudace.run.INTERNAL_ERROR": "unexpected error; check logs",
         "tihudace.html_missing": "❌ The model did not return renderable HTML/SVG content.",
         "tihudace.render_failed": "❌ Image rendering failed (Chromium missing in container or render timed out).",
         "tihudace.push.group_only": "Run this command in a QQ Official ordinary group or a OneBot group, not a private chat or QQ guild channel.",

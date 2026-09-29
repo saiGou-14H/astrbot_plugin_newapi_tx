@@ -110,6 +110,9 @@ class HelpCommandTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('an empty list stops QQ pushes', replies[0])
         self.assertIn('生成时间（北京时间 UTC+8，同轮各群一致）', chinese[0])
         self.assertIn('generation time (Beijing time, UTC+8', replies[0])
+        self.assertIn('最近任务阶段、失败原因与耗时', chinese[0])
+        self.assertIn('默认最多等待 10 分钟', chinese[0])
+        self.assertIn('latest run stage, failure reason and elapsed time', replies[0])
 
 
 if __name__ == "__main__":

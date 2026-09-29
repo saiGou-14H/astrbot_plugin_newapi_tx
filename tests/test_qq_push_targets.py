@@ -364,7 +364,13 @@ class BindingTests(unittest.IsolatedAsyncioTestCase):
     async def test_status_reports_selected_resolved_and_unbound_targets(self):
         await self.bind()
         self.plugin.config["tihudace_settings"]["push_targets"] = ["123", "456"]
+        scheduler = TihudaceScheduler(self.plugin, self.plugin.context)
+        scheduler.last_status = 'MODEL_TIMEOUT'
+        scheduler.last_elapsed = 600.0
+        self.plugin._tihudace_scheduler = scheduler
         replies = await self.collect(self.plugin.handle_tihudace_push_status(await self.event()))
+        self.assertIn('模型生成超时，下个周期继续', replies[0])
+        self.assertIn('600.0 秒', replies[0])
         self.assertEqual(len(replies), 1)
         self.assertIn("123", replies[0])
         self.assertIn("456", replies[0])
