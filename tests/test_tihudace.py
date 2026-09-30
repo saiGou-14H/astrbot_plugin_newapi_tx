@@ -120,6 +120,14 @@ class TihudaceHandlerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(images), 1)
         self.plugin.core.codex_chat_completion.assert_awaited_once_with("画一个鹈鹕")
 
+    async def test_working_message_uses_configured_model(self):
+        self.plugin.config['codex_settings']['model'] = 'gpt-6.1-sol'
+        self.plugin.core.codex_chat_completion = AsyncMock(return_value='<svg/>')
+        self.plugin._render_html_to_png = AsyncMock(return_value='/tmp/tihudace.png')
+        replies = await self.collect(self.plugin.handle_tihudace(await self.event('醍醐测智')))
+        self.assertIn('已召唤 gpt-6.1-sol', replies[0])
+        self.assertNotIn('gpt-6-astra', replies[0])
+
     async def test_concurrent_generation_uses_distinct_files(self):
         self.plugin.core.codex_chat_completion = AsyncMock(return_value='<svg/>')
         self.plugin._render_html_to_png = AsyncMock(side_effect=lambda html, path: path)
@@ -258,6 +266,7 @@ class SchedulerTests(unittest.IsolatedAsyncioTestCase):
     async def test_qq_timestamp_is_beijing_completion_time_shared_by_all_groups(self):
         from datetime import datetime, timedelta, timezone
         self.plugin.config['tihudace_settings']['push_targets'] = ['123', '456']
+        self.plugin.config['codex_settings']['model'] = 'gpt-6.1-sol'
         # UTC date differs from Beijing date; do not depend on container TZ.
         instant = datetime(2026, 9, 29, 16, 1, 2, tzinfo=timezone.utc)
         scheduler = TihudaceScheduler(self.plugin, self.context)
@@ -274,10 +283,10 @@ class SchedulerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(scheduler._send_qq_group.await_count, 2)
         captions = [call.args[1] for call in scheduler._send_qq_group.await_args_list]
         self.assertEqual(captions[0], captions[1])
-        self.assertEqual(captions[0], '醍醐测智 | gpt-6-astra 定时绘制完成\n'
+        self.assertEqual(captions[0], '醍醐测智 | gpt-6.1-sol 定时绘制完成\n'
                          '生成时间：2026-09-30 00:01:02（北京时间 UTC+8）')
         self.assertEqual(scheduler._send_dingtalk.await_args.args[1],
-                         '醍醐测智 | gpt-6-astra 定时绘制完成')
+                         '醍醐测智 | gpt-6.1-sol 定时绘制完成')
 
     async def test_signed_dingtalk_sender_uses_configured_secret(self):
         from urllib.parse import parse_qs, urlsplit

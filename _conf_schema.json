@@ -208,7 +208,7 @@
         }
     },
     "codex_settings": {
-        "description": "Codex 生图（醍醐测智：让 gpt-6-astra 生成 SVG 动画 HTML 并渲染成图片）",
+        "description": "Codex 生图（醍醐测智：使用下方配置的模型生成 SVG 动画 HTML 并渲染成图片）",
         "type": "object",
         "items": {
             "api_key": { "description": "调用模型用的 NewAPI 客户端 sk- 密钥；留空回退到 api_settings 管理员令牌", "type": "string", "default": "" },

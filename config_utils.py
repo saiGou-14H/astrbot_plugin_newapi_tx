@@ -8,3 +8,8 @@ def config_get(config, path, default=None):
             return default
         value = value[key]
     return value
+
+
+def codex_model_name(config):
+    """Use the same model and fallback for requests and user-facing messages."""
+    return str(config_get(config, 'codex_settings.model') or 'gpt-6-astra')

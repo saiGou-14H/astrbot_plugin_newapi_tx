@@ -15,7 +15,7 @@ from astrbot.api.message_components import At
 from .newapi_utils import NewApiCore, CodexGenerationError
 from .heist_logic import HeistLogic
 from .i18n import translate
-from .config_utils import config_get
+from .config_utils import config_get, codex_model_name
 from .qq_mentions import official_mention_ids
 from .qq_compat import QQMentionCompat, mention_summary, query_group_receive_mode
 from .pk_logic import PkLogic
@@ -227,7 +227,8 @@ class TihudaceScheduler:
         elapsed = asyncio.get_running_loop().time() - self._started_at
         logger.info(f'[醍醐测智] 图片生成完成，开始推送 elapsed={elapsed:.1f}s')
         conf = config_get(self.plugin.config, 'tihudace_settings', {}) or {}
-        summary = "醍醐测智 | gpt-6-astra 定时绘制完成"
+        model = codex_model_name(self.plugin.config)
+        summary = f"醍醐测智 | {model} 定时绘制完成"
         # Capture completion once so all groups identify the same generation.
         completed_at = datetime.now(timezone(timedelta(hours=8)))
         qq_summary = (f"{summary}\n"
@@ -292,7 +293,7 @@ class TihudaceScheduler:
             secret = config_get(self.plugin.config, 'tihudace_settings.dingtalk_secret', '')
             signed_url = signed_webhook_url(webhook, secret)
             now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            model = config_get(self.plugin.config, 'codex_settings.model', 'gpt-6-astra')
+            model = codex_model_name(self.plugin.config)
             text = (f"### {summary}\n\n"
                     f"- 时间：{now}\n"
                     f"- 模型：{model}（SVG 动画 HTML）\n")
@@ -910,12 +911,12 @@ class NewApiSuitePlugin(Star):
     @guard_errors
     @require_group_whitelist
     async def handle_tihudace(self, event: AstrMessageEvent):
-        """(娱乐) 让 gpt-6-astra 生成 SVG 动画 HTML，渲染成图片发回。"""
+        """(娱乐) 使用配置的模型生成 SVG 动画 HTML，渲染成图片发回。"""
         conf = config_get(self.config, 'codex_settings', {}) or {}
         if not str(conf.get('prompt_template') or '').strip():
             yield self._reply(event, self.t("tihudace.disabled"))
             return
-        yield self._reply(event, self.t("tihudace.working"))
+        yield self._reply(event, self.t("tihudace.working", model=codex_model_name(self.config)))
         status, png = await self._generate_tihudace_png()
         if status in ('MODEL_TIMEOUT', 'MODEL_FAILED'):
             key = 'tihudace.model_timeout' if status == 'MODEL_TIMEOUT' else 'tihudace.model_failed'

@@ -96,6 +96,13 @@ class CodexCompletionTests(unittest.IsolatedAsyncioTestCase):
         deadline.assert_called_once()
         self.assertEqual(deadline.call_args.kwargs['timeout'], 600)
 
+    async def test_configured_model_and_empty_model_fallback(self):
+        for configured, expected in [('gpt-6.1-sol', 'gpt-6.1-sol'), ('', 'gpt-6-astra'), (None, 'gpt-6-astra')]:
+            with self.subTest(model=configured):
+                self.conf['model'] = configured
+                await self.core.codex_chat_completion(PROMPT)
+                self.assertEqual(json.loads(self.requests[-1].content)['model'], expected)
+
     async def test_finite_timeout_parameters(self):
         for timeout in (10, 180, 240.5, 599, 600, '600'):
             with self.subTest(timeout=timeout):

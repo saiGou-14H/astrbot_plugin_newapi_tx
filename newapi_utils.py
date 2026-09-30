@@ -1,6 +1,6 @@
 import os
 import math
-from .config_utils import config_get
+from .config_utils import config_get, codex_model_name
 import json
 import asyncio
 import time
@@ -1116,7 +1116,7 @@ class NewApiCore:
             except (httpx.InvalidURL, ValueError):
                 raise CodexGenerationError('CONFIGURATION_ERROR') from None
             payload = {
-                'model': str(conf.get('model') or 'gpt-6-astra'),
+                'model': codex_model_name(self.config),
                 'messages': [{'role': 'user', 'content': str(prompt)}],
                 'stream': False,
             }

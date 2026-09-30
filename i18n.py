@@ -40,7 +40,7 @@ _TRANSLATIONS = {
             "PK榜 —— 今日 PK 盈亏榜\n"
             "PK战绩 [网站ID] —— PK 数据（他人仅管理员）\n"
             "PK总战绩 [网站ID] —— PK 历史总数据（他人仅管理员）\n"
-            "醍醐测智 —— gpt-6-astra 生成 SVG 动画并截图；定时推送在插件配置中设置，钉钉开启加签时需填 SEC 密钥\n"
+            "醍醐测智 —— 使用配置的模型生成 SVG 动画并截图；定时推送在插件配置中设置，钉钉开启加签时需填 SEC 密钥\n"
             "钉钉图片 —— 在图片存储配置中启用 MinIO/S3，PNG 上传并验证公网访问后显示图片；失败会提示并退回文字摘要\n"
             "QQ 定时推送 —— 插件配置的 QQ 推送群号列表可添加多个群；清空即停止 QQ 推送；图片说明附生成时间（北京时间 UTC+8，同轮各群一致）\n"
             "醍醐推送会话 —— 在目标群获取可直接填写的推送会话\n"
@@ -230,7 +230,7 @@ _TRANSLATIONS = {
         "pk.history.no_data": "🤔 你今天还没有 PK 记录。",
         # 醍醐测智
         "tihudace.disabled": "❌ 醍醐测智未配置：codex_settings.prompt_template 为空。",
-        "tihudace.working": "🎨 已召唤 gpt-6-astra，正在绘制「鹈鹕骑自行车」的 SVG 动画，请稍候…",
+        "tihudace.working": "🎨 已召唤 {model}，正在绘制 SVG 动画（使用配置提示词），请稍候…",
         "tihudace.model_timeout": "❌ 模型生成超时，本次没有生成图片。请稍后再试；定时任务会在下个周期继续。",
         "tihudace.model_failed": "❌ 模型请求失败或返回空结果，本次未生成图片；请检查模型服务和插件日志。",
         "tihudace.run.status": "本次启动后的最近任务：{state}｜耗时：{elapsed} 秒",
@@ -316,7 +316,7 @@ _TRANSLATIONS = {
             "PK榜 — daily PK P&L leaderboard\n"
             "PK战绩 [website ID] — PK data (others: admin only)\n"
             "PK总战绩 [website ID] — all-time PK data (others: admin only)\n"
-            "醍醐测智 — gpt-6-astra SVG screenshot; scheduled pushes are configured in plugin settings; signed DingTalk robots require the SEC secret\n"
+            "醍醐测智 — generate an SVG screenshot with the configured model; scheduled pushes are configured in plugin settings; signed DingTalk robots require the SEC secret\n"
             "DingTalk images — enable MinIO/S3 in image storage settings; PNG uploads are checked for public access before embedding; failures are reported with a text-only fallback\n"
             "Scheduled QQ pushes — add multiple groups to the QQ push group list in plugin settings; an empty list stops QQ pushes; image captions include generation time (Beijing time, UTC+8, shared across groups in the same run)\n"
             "醍醐推送会话 — get a direct push session in the intended group\n"
@@ -496,7 +496,7 @@ _TRANSLATIONS = {
         "pk.history.no_data": "🤔 You have no PK records today.",
         # 醍醐测智
         "tihudace.disabled": "❌ 醍醐测智 is not configured: codex_settings.prompt_template is empty.",
-        "tihudace.working": "🎨 Calling gpt-6-astra to draw the SVG pelican-on-a-bike animation, please wait…",
+        "tihudace.working": "🎨 Calling {model} to draw an SVG animation using the configured prompt, please wait…",
         "tihudace.model_timeout": "❌ Model generation timed out; no image was generated. Try again later; scheduled runs continue next cycle.",
         "tihudace.model_failed": "❌ The model request failed or returned an empty result. Check the model service and plugin logs.",
         "tihudace.run.status": "Latest run since startup: {state} | Elapsed: {elapsed} seconds",
