@@ -58,8 +58,8 @@ def build_plugin(config, *, token='sk-shared', contents=None):
 
 @pytest.fixture(autouse=True)
 def _no_retry_delay(monkeypatch):
-    """重试逻辑在单测里不需要真的等，延迟归零。"""
-    monkeypatch.setattr(plugin_main, 'TIHUDACE_RETRY_DELAY_SECONDS', 0)
+    """重试逻辑在单测里不需要真的等：保留阶梯长度（3 次尝试）但延迟归零。"""
+    monkeypatch.setattr(plugin_main, 'TIHUDACE_RETRY_DELAYS', (0, 0))
     return None
 
 
@@ -135,10 +135,10 @@ def test_batch_generation_is_isolated_per_site(tmp_path):
     assert outcomes[0].png and os.path.exists(outcomes[0].png)
     assert outcomes[1].png == '' and outcomes[2].png == ''
     # 每个站点都收到了同一提示词，且用的是各自的模型；
-    # 超时站点会按瞬时故障重试一次，因此 model-b 出现两次
+    # 超时站点按退避阶梯重试到上限，因此 model-b 共请求 3 次
     assert {call[0] for call in plugin._state['calls']} == {'model-a', 'model-b', 'model-c'}
     assert {call[1] for call in plugin._state['calls']} == {'画一个 SVG'}
-    assert [call[0] for call in plugin._state['calls']].count('model-b') == 2
+    assert [call[0] for call in plugin._state['calls']].count('model-b') == 3
 
 
 def test_batch_report_lists_every_site_and_counts(tmp_path):
@@ -265,11 +265,38 @@ def test_timeout_keeps_model_timeout_status_after_retries(tmp_path):
 
     plugin = build_plugin(
         {'codex_settings': {'prompt_template': 'p', 'targets': ['https://a.example.com|sk-a|model-a']}},
-        contents={'model-a': [CodexGenerationError('TIMEOUT'), CodexGenerationError('TIMEOUT')]},
+        contents={'model-a': [CodexGenerationError('TIMEOUT')] * 3},
     )
     patch_data_dir(plugin, tmp_path)
     targets, _ = plugin._tihudace_targets()
 
     outcomes, _ = asyncio.run(plugin._generate_tihudace_batch(targets))
     assert [o.status for o in outcomes] == ['MODEL_TIMEOUT']
-    assert len(plugin._state['calls']) == 2
+    assert len(plugin._state['calls']) == 3
+
+
+def test_retry_uses_staggered_backoff_then_succeeds(tmp_path, monkeypatch):
+    """连续两次瞬时失败后按 20s/40s 退避，第三次成功仍能出图。"""
+    from astrbot_plugin_newapi_tx.newapi_utils import CodexGenerationError
+
+    plugin = build_plugin(
+        {'codex_settings': {'prompt_template': 'p', 'targets': ['https://a.example.com|sk-a|model-a']}},
+        contents={'model-a': [CodexGenerationError('HTTP_ERROR', 502),
+                              CodexGenerationError('HTTP_ERROR', 503),
+                              '```html\n<svg><rect/></svg>\n```']},
+    )
+    patch_data_dir(plugin, tmp_path)
+    targets, _ = plugin._tihudace_targets()
+
+    slept = []
+
+    async def fake_sleep(delay):
+        slept.append(delay)
+
+    monkeypatch.setattr(plugin_main, 'TIHUDACE_RETRY_DELAYS', (20.0, 40.0))
+    monkeypatch.setattr(plugin_main.asyncio, 'sleep', fake_sleep)
+
+    outcomes, _ = asyncio.run(plugin._generate_tihudace_batch(targets))
+    assert [o.status for o in outcomes] == ['OK']
+    assert slept == [20.0, 40.0]
+    assert len(plugin._state['calls']) == 3
