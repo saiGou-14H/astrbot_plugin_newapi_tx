@@ -1082,8 +1082,13 @@ class NewApiCore:
             return response.get("data")
         return None
 
-    async def codex_chat_completion(self, prompt: str) -> str:
-        """Generate text once, with a total deadline and safe, typed failures."""
+    async def codex_chat_completion(self, prompt: str, target=None) -> str:
+        """Generate text once, with a total deadline and safe, typed failures.
+
+        `target` 是可选的单站点覆盖（批量测智用）：提供时使用它自带的
+        base_url / api_key / model，其余（超时、协议）仍来自 codex_settings。
+        不传 target 时行为与历史单站点实现完全一致。
+        """
         started = time.monotonic()
         error = None
         try:
@@ -1101,6 +1106,16 @@ class NewApiCore:
                 raise CodexGenerationError('CONFIGURATION_ERROR')
             key = conf.get('api_key') or self.api_access_token or ''
             base = conf.get('base_url') or self.api_base_url or ''
+            model = codex_model_name(self.config)
+            if target is not None:
+                # Per-site overrides: an entry may omit nothing, since the
+                # parser already validated it and filled the shared key.
+                target_base = str(getattr(target, 'base_url', '') or '').strip()
+                target_key = str(getattr(target, 'api_key', '') or '').strip()
+                target_model = str(getattr(target, 'model', '') or '').strip()
+                if not (target_base and target_key and target_model):
+                    raise CodexGenerationError('CONFIGURATION_ERROR')
+                base, key, model = target_base, target_key, target_model
             if not isinstance(key, str) or not isinstance(base, str):
                 raise CodexGenerationError('CONFIGURATION_ERROR')
             key = key.strip()
@@ -1116,7 +1131,7 @@ class NewApiCore:
             except (httpx.InvalidURL, ValueError):
                 raise CodexGenerationError('CONFIGURATION_ERROR') from None
             payload = {
-                'model': codex_model_name(self.config),
+                'model': model,
                 'messages': [{'role': 'user', 'content': str(prompt)}],
                 'stream': False,
             }

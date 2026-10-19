@@ -41,6 +41,8 @@ _TRANSLATIONS = {
             "PK战绩 [网站ID] —— PK 数据（他人仅管理员）\n"
             "PK总战绩 [网站ID] —— PK 历史总数据（他人仅管理员）\n"
             "醍醐测智 —— 使用配置的模型生成 SVG 动画并截图；定时推送在插件配置中设置，钉钉开启加签时需填 SEC 密钥\n"
+            "醍醐测智（多站点批量）—— 在插件配置 → Codex 生图 → 多站点列表填写「站点地址|APIKey|模型名」或「名称|站点地址|APIKey|模型名」，一行一个站点；\n"
+            "　　同一条命令即批量测智：逐站点出图并逐张发送，单个站点失败不影响其他站点；最多 10 个站点，坏行跳过并提示（密钥脱敏）；列表留空则回到单站点模式\n"
             "钉钉图片 —— 在图片存储配置中启用 MinIO/S3，PNG 上传并验证公网访问后显示图片；失败会提示并退回文字摘要\n"
             "图片存储诊断 —— 日志仅记录安全错误码；storage_full 表示存储空间不足，请管理员清理或扩容；不会自动重试或放宽公网访问校验\n"
             "QQ 定时推送 —— 插件配置的 QQ 推送群号列表可添加多个群；清空即停止 QQ 推送；图片说明附生成时间（北京时间 UTC+8，同轮各群一致）\n"
@@ -250,6 +252,21 @@ _TRANSLATIONS = {
         "tihudace.run.INTERNAL_ERROR": "任务发生异常，请查日志",
         "tihudace.html_missing": "❌ 模型没有返回可渲染的 HTML/SVG 内容。",
         "tihudace.render_failed": "❌ 图片渲染失败（容器可能缺少 Chromium 或渲染超时）。",
+        # 批量测智（多站点）
+        "tihudace.batch.working": "🎨 批量测智：正在向 {count} 个站点请求并逐个渲染，请稍候…",
+        "tihudace.batch.header": "🧪 批量测智结果：{ok}/{total} 个站点出图成功",
+        "tihudace.batch.item": "✅ {name}｜{model}：{state}",
+        "tihudace.batch.state.ok": "已出图",
+        "tihudace.batch.item_failed": "❌ {name}｜{model}：{reason}",
+        "tihudace.batch.none": "本次没有站点成功出图；请检查站点地址、密钥、模型名与插件日志。",
+        "tihudace.batch.issue_header": "⚠️ 以下站点配置无效，已跳过（密钥已脱敏）：",
+        "tihudace.batch.issue_line": "第 {index} 条（{preview}）：{reason}",
+        "tihudace.batch.issue_more": "另有 {count} 条无效配置未列出。",
+        "tihudace.spec.reason.invalid_format": "格式错误，应为 站点地址|APIKey|模型名 或 名称|站点地址|APIKey|模型名",
+        "tihudace.spec.reason.invalid_base_url": "站点地址无效，需为 http(s) 地址",
+        "tihudace.spec.reason.missing_model": "缺少模型名",
+        "tihudace.spec.reason.missing_api_key": "缺少 APIKey（条目内和 api_key 均为空）",
+        "tihudace.spec.reason.too_many_targets": "超出单次批量上限（最多 10 个站点）",
         "tihudace.push.group_only": "请在 QQ 官方普通群或 OneBot 群中执行此指令；不支持私聊或 QQ 频道。",
         "tihudace.push.admin_only": "此操作需要 AstrBot 管理员权限（官方机器人使用发送者 OpenID 判断）。",
         "tihudace.push.bad_number": "请输入有效群号：醍醐推送绑定 群号 / 醍醐推送解绑 群号。OneBot 绑定的群号必须与当前群一致。",
@@ -318,6 +335,8 @@ _TRANSLATIONS = {
             "PK战绩 [website ID] — PK data (others: admin only)\n"
             "PK总战绩 [website ID] — all-time PK data (others: admin only)\n"
             "醍醐测智 — generate an SVG screenshot with the configured model; scheduled pushes are configured in plugin settings; signed DingTalk robots require the SEC secret\n"
+            "醍醐测智 (multi-site batch) — under plugin settings → Codex generation → multi-site list, add one site per line as url|api_key|model or name|url|api_key|model;\n"
+            "　　one command batch-tests every site: each result is rendered and sent separately, a failed site does not stop the others; up to 10 sites, invalid lines are skipped and reported with keys masked; an empty list falls back to single-site mode\n"
             "DingTalk images — enable MinIO/S3 in image storage settings; PNG uploads are checked for public access before embedding; failures are reported with a text-only fallback\n"
             "Image storage diagnostics — logs contain only safe error codes; storage_full means insufficient storage space: ask an administrator to clean up or expand storage; no automatic retries or relaxed public-access checks\n"
             "Scheduled QQ pushes — add multiple groups to the QQ push group list in plugin settings; an empty list stops QQ pushes; image captions include generation time (Beijing time, UTC+8, shared across groups in the same run)\n"
@@ -517,6 +536,21 @@ _TRANSLATIONS = {
         "tihudace.run.INTERNAL_ERROR": "unexpected error; check logs",
         "tihudace.html_missing": "❌ The model did not return renderable HTML/SVG content.",
         "tihudace.render_failed": "❌ Image rendering failed (Chromium missing in container or render timed out).",
+        # Batch testing across multiple sites
+        "tihudace.batch.working": "🎨 Batch test: requesting {count} site(s) and rendering each result, please wait…",
+        "tihudace.batch.header": "🧪 Batch results: {ok}/{total} site(s) produced an image",
+        "tihudace.batch.item": "✅ {name} | {model}: {state}",
+        "tihudace.batch.state.ok": "image produced",
+        "tihudace.batch.item_failed": "❌ {name} | {model}: {reason}",
+        "tihudace.batch.none": "No site produced an image. Check the site URLs, keys, model names and plugin logs.",
+        "tihudace.batch.issue_header": "⚠️ These site entries are invalid and were skipped (keys masked):",
+        "tihudace.batch.issue_line": "Entry {index} ({preview}): {reason}",
+        "tihudace.batch.issue_more": "{count} more invalid entries not shown.",
+        "tihudace.spec.reason.invalid_format": "invalid format; use url|api_key|model or name|url|api_key|model",
+        "tihudace.spec.reason.invalid_base_url": "invalid site URL; it must be an http(s) URL",
+        "tihudace.spec.reason.missing_model": "missing model name",
+        "tihudace.spec.reason.missing_api_key": "missing API key (entry and api_key are both empty)",
+        "tihudace.spec.reason.too_many_targets": "exceeds the per-batch limit (10 sites)",
         "tihudace.push.group_only": "Run this command in a QQ Official ordinary group or a OneBot group, not a private chat or QQ guild channel.",
         "tihudace.push.admin_only": "This operation requires AstrBot admin permission (QQ Official identifies admins by sender OpenID).",
         "tihudace.push.bad_number": "Enter a valid group number: 醍醐推送绑定 <number> / 醍醐推送解绑 <number>. A OneBot number must match the current group.",

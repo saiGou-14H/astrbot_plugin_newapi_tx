@@ -23,6 +23,8 @@ from .qq_push_targets import (
     BINDINGS_KEY, configured_targets, current_group_route, is_group_number,
     resolve_targets, route_session,
 )
+from .tihudace_targets import TargetIssue, parse_target_specs
+from .tihudace_batch import first_failure_status, run_targets, successful
 
 def load_plugin_version() -> str:
     """
@@ -219,20 +221,54 @@ class TihudaceScheduler:
                 logger.info(f'[醍醐测智] 定时任务结束 status={self.last_status} elapsed={self.last_elapsed:.1f}s')
 
     async def _execute_push(self):
-        status, png = await self.plugin._generate_tihudace_png()
-        if status != 'OK' or not png:
-            logger.error(f'[醍醐测智] 定时生成失败（{status}），本轮未推送，下个定时周期继续。')
-            return status if status != 'OK' else 'RENDER_FAILED'
+        """生成图片并推送；配置多站点时逐站点生成、逐张推送。"""
+        images, failure = await self._collect_images()
+        if not images:
+            logger.error(f'[醍醐测智] 定时生成失败（{failure}），本轮未推送，下个定时周期继续。')
+            return failure
         self.last_status = 'SENDING'
         elapsed = asyncio.get_running_loop().time() - self._started_at
-        logger.info(f'[醍醐测智] 图片生成完成，开始推送 elapsed={elapsed:.1f}s')
+        logger.info(f'[醍醐测智] 图片生成完成 count={len(images)}，开始推送 elapsed={elapsed:.1f}s')
+        return await self._push_images(images)
+
+    async def _collect_images(self):
+        """返回（[(摘要模型名, png)], 失败状态码）；失败状态码仅在无图时使用。"""
+        reader = getattr(self.plugin, '_tihudace_targets', None)
+        if callable(reader):
+            targets, issues = reader()
+        else:
+            # 旧版插件实例（含测试替身）没有多站点接口，直接走单站点路径。
+            targets, issues = [], []
+        if issues:
+            logger.warning(f'[醍醐测智] 多站点配置有 {len(issues)} 条被跳过；请检查 codex_settings.targets。')
+        if not targets:
+            status, png = await self.plugin._generate_tihudace_png()
+            if status != 'OK' or not png:
+                return [], status if status != 'OK' else 'RENDER_FAILED'
+            return [(codex_model_name(self.plugin.config), png, '')], 'MODEL_FAILED'
+        outcomes, prompt = await self.plugin._generate_tihudace_batch(targets)
+        if not prompt:
+            return [], 'DISABLED'
+        if not successful(outcomes):
+            status = first_failure_status(outcomes)
+            logger.error(f'[醍醐测智] 批量测智全部站点失败（{status}），本轮未推送。')
+            return [], status
+        for outcome in outcomes:
+            if not outcome.ok:
+                logger.warning(f'[醍醐测智] 站点生成失败 status={outcome.status} model={outcome.target.model}')
+        images = [
+            (outcome.target.model, outcome.png, outcome.target.label)
+            for outcome in successful(outcomes)
+        ]
+        return images, 'MODEL_FAILED'
+
+    async def _push_images(self, images):
+        """把每张图片推送到全部已配置渠道；返回聚合状态码。"""
         conf = config_get(self.plugin.config, 'tihudace_settings', {}) or {}
-        model = codex_model_name(self.plugin.config)
-        summary = f"醍醐测智 | {model} 定时绘制完成"
+        model_label = (f'{len(images)} 个站点' if len(images) > 1 else images[0][0])
+        summary = f"醍醐测智 | {model_label} 定时绘制完成"
         # Capture completion once so all groups identify the same generation.
         completed_at = datetime.now(timezone(timedelta(hours=8)))
-        qq_summary = (f"{summary}\n"
-                      f"生成时间：{completed_at:%Y-%m-%d %H:%M:%S}（北京时间 UTC+8）")
         failed = False
         try:
             bindings = await self.plugin.get_kv_data(BINDINGS_KEY, {})
@@ -247,19 +283,39 @@ class TihudaceScheduler:
             logger.warning(f"[醍醐测智] QQ目标读取失败: {type(e).__name__}")
             routes, failed = [], True
         sent_count = 0
-        for index, route in enumerate(routes, 1):
-            if await self._send_qq_group(route, qq_summary, png, index):
-                sent_count += 1
-            else:
-                failed = True
+        for index, label, model, png in self._labelled(images):
+            caption = (f"{summary}\n"
+                       f"生成时间：{completed_at:%Y-%m-%d %H:%M:%S}（北京时间 UTC+8）")
+            if len(images) > 1:
+                caption = (f"醍醐测智 | {label}（{model}）定时绘制完成\n"
+                           f"生成时间：{completed_at:%Y-%m-%d %H:%M:%S}（北京时间 UTC+8）")
+            for route in routes:
+                if await self._send_qq_group(route, caption, png, index):
+                    sent_count += 1
+                else:
+                    failed = True
         if conf.get('dingtalk_enabled'):
-            if conf.get('dingtalk_webhook') and await self._send_dingtalk(str(conf['dingtalk_webhook']), summary, png):
+            webhook = str(conf.get('dingtalk_webhook') or '')
+            if len(images) == 1:
+                # 单图沿用历史入口，保持摘要与正文格式不变。
+                sent = bool(webhook) and await self._send_dingtalk(webhook, summary, images[0][1])
+            else:
+                sent = bool(webhook) and await self._send_dingtalk_many(webhook, summary, images)
+            if sent:
                 sent_count += 1
             else:
                 failed = True
         if failed:
             return 'PUSH_FAILED'
         return 'OK' if sent_count else 'NO_TARGETS'
+
+    @staticmethod
+    def _labelled(images):
+        """补齐（序号, 展示名, 模型名, png）；兼容无标签的单站点结果。"""
+        for index, image in enumerate(images, 1):
+            model, png = image[0], image[1]
+            label = image[2] if len(image) > 2 else ''
+            yield index, label or model, model, png
 
     async def _send_qq_group(self, route: dict, summary: str, png: str, index: int = 1):
         try:
@@ -275,32 +331,50 @@ class TihudaceScheduler:
             return False
 
     async def _send_dingtalk(self, webhook: str, summary: str, png: str) -> bool:
+        """单图推送（历史入口）。"""
+        return await self._send_dingtalk_many(webhook, summary, [(codex_model_name(self.plugin.config), png)])
+
+    async def _send_dingtalk_many(self, webhook: str, summary: str, images) -> bool:
+        """推送一张或多张图片；多站点时逐张上传并写入同一 markdown。"""
         try:
             import httpx
             from .dingtalk_signing import signed_webhook_url
+            from .image_storage import safe_error_code, upload_tihudace_png
             storage = config_get(self.plugin.config, 'image_storage_settings', {}) or {}
-            image_url = None
+            uploads = []
             image_failed = False
             image_error_code = 'upload_failed'
             if storage.get('enabled', False):
-                from .image_storage import safe_error_code, upload_tihudace_png
-                try:
-                    image_url = await upload_tihudace_png(png, storage)
-                except Exception as e:
-                    # Only allowlisted owned codes, never exception text or SDK fields.
-                    image_error_code = safe_error_code(e)
-                    logger.warning(f"[醍醐测智] 钉钉图片上传或公开访问校验失败: code={image_error_code}")
-                    image_failed = True
+                for image in images:
+                    model, png = image[0], image[1]
+                    label = image[2] if len(image) > 2 else ''
+                    try:
+                        url = await upload_tihudace_png(png, storage)
+                    except Exception as e:
+                        # Only allowlisted owned codes, never exception text or SDK fields.
+                        image_error_code = safe_error_code(e)
+                        logger.warning(f"[醍醐测智] 钉钉图片上传或公开访问校验失败: code={image_error_code}")
+                        image_failed = True
+                        continue
+                    uploads.append((label or model, model, url))
             # Sign after the upload so a slow storage request cannot age the signature.
             secret = config_get(self.plugin.config, 'tihudace_settings.dingtalk_secret', '')
             signed_url = signed_webhook_url(webhook, secret)
             now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            model = codex_model_name(self.plugin.config)
+            if len(images) > 1:
+                models = '、'.join(f'{label}（{model}）' for label, model, _ in uploads) or f'{len(images)} 个站点'
+            else:
+                models = f"{images[0][0]}（SVG 动画 HTML）"
             text = (f"### {summary}\n\n"
                     f"- 时间：{now}\n"
-                    f"- 模型：{model}（SVG 动画 HTML）\n")
-            if image_url:
-                text += f"\n![醍醐测智生成图片]({image_url})\n\n[查看原图]({image_url})"
+                    f"- 模型：{models}\n")
+            if uploads and len(images) == 1:
+                # 单图正文与历史版本逐字一致，避免下游客户端/测试出现差异。
+                text += f"\n![醍醐测智生成图片]({uploads[0][2]})\n\n[查看原图]({uploads[0][2]})"
+            elif uploads:
+                for label, model, image_url in uploads:
+                    text += f"\n**{label}（{model}）**\n"
+                    text += f"\n![醍醐测智生成图片]({image_url})\n\n[查看原图]({image_url})\n"
             elif image_failed:
                 if image_error_code == 'storage_full':
                     text += "- 图片存储空间不足（storage_full），请管理员清理或扩容 MinIO/S3 存储；本次仅发送文字摘要。"
@@ -325,7 +399,7 @@ class TihudaceScheduler:
             if image_failed:
                 logger.warning("[醍醐测智] 钉钉文字摘要已接受，但图片未发送")
                 return False
-            logger.info(f"[醍醐测智] 钉钉推送已接受 errcode=0 image={'yes' if image_url else 'no'}")
+            logger.info(f"[醍醐测智] 钉钉推送已接受 errcode=0 images={len(uploads)}")
             return True
         except Exception as e:
             # Never log exception text: network errors can contain webhook secrets.
@@ -794,9 +868,40 @@ class NewApiSuitePlugin(Star):
             return png_path
         return None
 
-    async def _generate_tihudace_png(self) -> Tuple[str, Optional[str]]:
-        """生成醍醐测智图片；返回 (状态码, png路径)。"""
+    def _tihudace_config(self) -> Dict[str, Any]:
+        """读取 codex_settings，异常配置按空字典处理。"""
         conf = config_get(self.config, 'codex_settings', {}) or {}
+        return conf if isinstance(conf, dict) else {}
+
+    def _tihudace_targets(self) -> Tuple[list, list]:
+        """解析多站点配置，返回（站点列表, 被跳过的配置）。
+
+        未配置站点时返回空列表，调用方回退到单站点路径（历史行为）。
+        """
+        conf = self._tihudace_config()
+        fallback_key = str(conf.get('api_key') or '').strip()
+        if not fallback_key:
+            core = getattr(self, 'core', None)
+            fallback_key = str(getattr(core, 'api_access_token', '') or '').strip()
+        try:
+            targets, issues = parse_target_specs(conf.get('targets'), fallback_key)
+        except Exception:
+            # 配置形态异常不能让整个指令失败；当作未配置多站点处理。
+            return [], [TargetIssue(index=0, reason='invalid_format', preview='')]
+        return targets, issues
+
+    @staticmethod
+    def _tihudace_status_key(status: str) -> str:
+        """把生成状态映射到 i18n 的 tihudace.run.* 文案键。"""
+        known = {
+            'MODEL_TIMEOUT', 'MODEL_FAILED', 'HTML_MISSING', 'RENDER_FAILED',
+            'DISABLED', 'INTERNAL_ERROR', 'CANCELLED',
+        }
+        return status if status in known else 'INTERNAL_ERROR'
+
+    async def _generate_tihudace_png(self) -> Tuple[str, Optional[str]]:
+        """生成醍醐测智图片；返回 (状态码, png路径)。单站点路径。"""
+        conf = self._tihudace_config()
         prompt = str(conf.get('prompt_template') or '').strip()
         if not prompt:
             return "DISABLED", None
@@ -804,19 +909,48 @@ class NewApiSuitePlugin(Star):
             content = await self.core.codex_chat_completion(prompt)
         except CodexGenerationError as e:
             return ('MODEL_TIMEOUT' if e.code == 'TIMEOUT' else 'MODEL_FAILED'), None
+        return await self._tihudace_render(content)
+
+    async def _tihudace_generate_one(self, target, prompt: str) -> Tuple[str, str]:
+        """对单个站点执行「请求模型 → 渲染图片」。"""
+        try:
+            content = await self.core.codex_chat_completion(prompt, target=target)
+        except CodexGenerationError as e:
+            return ('MODEL_TIMEOUT' if e.code == 'TIMEOUT' else 'MODEL_FAILED'), ''
+        return await self._tihudace_render(content)
+
+    async def _tihudace_render(self, content) -> Tuple[str, str]:
+        """把模型回复渲染成 PNG；返回 (状态码, png路径)。"""
         if not content:
-            return 'MODEL_FAILED', None
+            return 'MODEL_FAILED', ''
         html = self._extract_html(content)
         if not html:
-            return "HTML_MISSING", None
+            return "HTML_MISSING", ''
         out_dir = os.path.join(self.core._resolve_plugin_data_dir(), 'tihudace')
         os.makedirs(out_dir, exist_ok=True)
         from uuid import uuid4
         png_path = os.path.join(out_dir, f'tihudace-{uuid4().hex}.png')
         png = await self._render_html_to_png(html, png_path)
         if not png:
-            return "RENDER_FAILED", None
+            return "RENDER_FAILED", ''
         return "OK", png
+
+    async def _generate_tihudace_batch(self, targets) -> Tuple[list, str]:
+        """批量测智：逐个站点生成图片；返回（结果列表, 提示词）。
+
+        关键约定：站点之间互相独立，任一站点失败都不影响其他站点；
+        结果顺序与配置顺序一致。
+        """
+        conf = self._tihudace_config()
+        prompt = str(conf.get('prompt_template') or '').strip()
+        if not prompt:
+            return [], ''
+        outcomes = await run_targets(
+            targets,
+            lambda target: self._tihudace_generate_one(target, prompt),
+        )
+        return outcomes, prompt
+
 
     def _qq_push_reply(self, event, text):
         result = self._reply(event, text)
@@ -916,24 +1050,73 @@ class NewApiSuitePlugin(Star):
     @guard_errors
     @require_group_whitelist
     async def handle_tihudace(self, event: AstrMessageEvent):
-        """(娱乐) 使用配置的模型生成 SVG 动画 HTML，渲染成图片发回。"""
-        conf = config_get(self.config, 'codex_settings', {}) or {}
+        """(娱乐) 使用配置的模型生成 SVG 动画 HTML，渲染成图片发回。
+
+        配置了 `codex_settings.targets` 时按多站点批量测智；否则维持单站点行为。
+        """
+        conf = self._tihudace_config()
         if not str(conf.get('prompt_template') or '').strip():
             yield self._reply(event, self.t("tihudace.disabled"))
             return
-        yield self._reply(event, self.t("tihudace.working", model=codex_model_name(self.config)))
-        status, png = await self._generate_tihudace_png()
-        if status in ('MODEL_TIMEOUT', 'MODEL_FAILED'):
-            key = 'tihudace.model_timeout' if status == 'MODEL_TIMEOUT' else 'tihudace.model_failed'
-            yield self._reply(event, self.t(key))
+        targets, issues = self._tihudace_targets()
+        if issues:
+            yield self._qq_push_reply(event, self._tihudace_issue_text(issues))
+        if not targets:
+            yield self._reply(event, self.t("tihudace.working", model=codex_model_name(self.config)))
+            status, png = await self._generate_tihudace_png()
+            if status in ('MODEL_TIMEOUT', 'MODEL_FAILED'):
+                key = 'tihudace.model_timeout' if status == 'MODEL_TIMEOUT' else 'tihudace.model_failed'
+                yield self._reply(event, self.t(key))
+                return
+            if status == "HTML_MISSING":
+                yield self._reply(event, self.t("tihudace.html_missing"))
+                return
+            if status != "OK":
+                yield self._reply(event, self.t("tihudace.render_failed"))
+                return
+            yield event.image_result(png)
             return
-        if status == "HTML_MISSING":
-            yield self._reply(event, self.t("tihudace.html_missing"))
-            return
-        if status != "OK":
-            yield self._reply(event, self.t("tihudace.render_failed"))
-            return
-        yield event.image_result(png)
+        yield self._qq_push_reply(event, self.t("tihudace.batch.working", count=len(targets)))
+        outcomes, _prompt = await self._generate_tihudace_batch(targets)
+        done = successful(outcomes)
+        for outcome in done:
+            yield event.image_result(outcome.png)
+        yield self._qq_push_reply(event, self._tihudace_batch_report(outcomes))
+
+    def _tihudace_issue_text(self, issues) -> str:
+        """把被跳过的站点配置汇总成一条提示，密钥已脱敏。"""
+        lines = [self.t("tihudace.batch.issue_header")]
+        for issue in issues[:5]:
+            reason = self.t('tihudace.spec.reason.' + issue.reason)
+            lines.append(self.t(
+                "tihudace.batch.issue_line", index=issue.index,
+                reason=reason, preview=issue.preview or '-',
+            ))
+        if len(issues) > 5:
+            lines.append(self.t("tihudace.batch.issue_more", count=len(issues) - 5))
+        return "\n".join(lines)
+
+    def _tihudace_batch_report(self, outcomes) -> str:
+        """批量测智结果汇总：成功数与逐站点状态。"""
+        ok = successful(outcomes)
+        lines = [self.t("tihudace.batch.header", ok=len(ok), total=len(outcomes))]
+        for outcome in outcomes:
+            if outcome.ok:
+                # 成功站点说明的是「已出图」，不能复用推送阶段的状态文案。
+                lines.append(self.t(
+                    "tihudace.batch.item", name=outcome.target.label,
+                    model=outcome.target.model, state=self.t("tihudace.batch.state.ok"),
+                ))
+            else:
+                reason = self.t('tihudace.run.' + self._tihudace_status_key(outcome.status))
+                lines.append(self.t(
+                    "tihudace.batch.item_failed", name=outcome.target.label,
+                    model=outcome.target.model, reason=reason,
+                ))
+        if not ok:
+            lines.append(self.t("tihudace.batch.none"))
+        return "\n".join(lines)
+
 
     @filter.command("中转站指令", alias={"中转站帮助", "指令大全"})
     @guard_errors

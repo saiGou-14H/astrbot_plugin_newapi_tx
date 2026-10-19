@@ -208,14 +208,15 @@
         }
     },
     "codex_settings": {
-        "description": "Codex 生图（醍醐测智：使用下方配置的模型生成 SVG 动画 HTML 并渲染成图片）",
+        "description": "Codex 生图（醍醐测智：生成 SVG 动画 HTML 并渲染成图片；可配置多个站点批量测智）",
         "type": "object",
         "items": {
-            "api_key": { "description": "调用模型用的 NewAPI 客户端 sk- 密钥；留空回退到 api_settings 管理员令牌", "type": "string", "default": "" },
-            "base_url": { "description": "NewAPI 地址；留空回退到 api_settings.api_base_url", "type": "string", "default": "" },
-            "model": { "description": "生成用的模型名", "type": "string", "default": "gpt-6-astra" },
+            "api_key": { "description": "单站点模式的 NewAPI 客户端 sk- 密钥，同时作为多站点条目的默认密钥（条目里留空则用它）；留空回退到 api_settings 管理员令牌", "type": "string", "default": "" },
+            "base_url": { "description": "单站点模式的 NewAPI 地址；留空回退到 api_settings.api_base_url。配置了多站点列表时本条只作默认值", "type": "string", "default": "" },
+            "model": { "description": "单站点模式的模型名；配置了多站点列表时本条只作默认值", "type": "string", "default": "gpt-6-astra" },
             "timeout_seconds": { "description": "模型请求总超时（秒，10–600；默认 600）。慢速生成可能超过 3 分钟；超时会结束本轮，下个定时周期继续。", "type": "int", "default": 600 },
-            "prompt_template": { "description": "生成提示词", "type": "text", "default": "创建一个HTML，内容是SVG绘制一个鹈鹕骑自行车的2D动画，你不需要任何测试" }
+            "prompt_template": { "description": "生成提示词", "type": "text", "default": "创建一个HTML，内容是SVG绘制一个鹈鹕骑自行车的2D动画，你不需要任何测试" },
+            "targets": { "description": "多站点批量测智列表，一行一个站点：站点地址|APIKey|模型名 或 名称|站点地址|APIKey|模型名（全角竖线也可）；APIKey 留空则用上方 api_key。留空表示只用单站点配置；最多执行 10 个站点，坏行会被跳过并提示", "type": "list", "default": [], "hint": "示例：\nhttps://api.example.com|sk-xxxx|gpt-4o-mini\n主站|https://api.example.org|sk-yyyy|claude-sonnet-4\n\n「醍醐测智」会逐站点出图并逐张发送，单个站点失败不影响其他站点；定时推送同样按站点逐张推送。" }
         }
     },
     "tihudace_settings": {
