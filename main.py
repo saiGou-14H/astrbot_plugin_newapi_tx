@@ -281,13 +281,15 @@ class TihudaceScheduler:
             storage = config_get(self.plugin.config, 'image_storage_settings', {}) or {}
             image_url = None
             image_failed = False
+            image_error_code = 'upload_failed'
             if storage.get('enabled', False):
+                from .image_storage import safe_error_code, upload_tihudace_png
                 try:
-                    from .image_storage import upload_tihudace_png
                     image_url = await upload_tihudace_png(png, storage)
                 except Exception as e:
-                    # Storage/HTTP exceptions can contain credentials. Log only type.
-                    logger.warning(f"[醍醐测智] 钉钉图片上传或公开访问校验失败: {type(e).__name__}")
+                    # Only allowlisted owned codes, never exception text or SDK fields.
+                    image_error_code = safe_error_code(e)
+                    logger.warning(f"[醍醐测智] 钉钉图片上传或公开访问校验失败: code={image_error_code}")
                     image_failed = True
             # Sign after the upload so a slow storage request cannot age the signature.
             secret = config_get(self.plugin.config, 'tihudace_settings.dingtalk_secret', '')
@@ -300,7 +302,10 @@ class TihudaceScheduler:
             if image_url:
                 text += f"\n![醍醐测智生成图片]({image_url})\n\n[查看原图]({image_url})"
             elif image_failed:
-                text += "- 图片上传或公开访问校验失败，本次仅发送文字摘要。"
+                if image_error_code == 'storage_full':
+                    text += "- 图片存储空间不足（storage_full），请管理员清理或扩容 MinIO/S3 存储；本次仅发送文字摘要。"
+                else:
+                    text += "- 图片上传或公开访问校验失败，本次仅发送文字摘要。"
             else:
                 text += "- 未启用图片存储，本次仅发送文字摘要。"
             async with httpx.AsyncClient(timeout=15, follow_redirects=False) as client:

@@ -101,6 +101,10 @@ class HelpCommandTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("DingTalk images", replies[0])
         self.assertIn("checked for public access", replies[0])
         self.assertIn("text-only fallback", replies[0])
+        self.assertIn('storage_full 表示存储空间不足', chinese[0])
+        self.assertIn('不会自动重试或放宽公网访问校验', chinese[0])
+        self.assertIn('storage_full means insufficient storage space', replies[0])
+        self.assertIn('no automatic retries or relaxed public-access checks', replies[0])
         for name in ('醍醐推送会话', '醍醐推送绑定', '醍醐推送解绑', '醍醐推送状态'):
             self.assertIn(name, chinese[0])
             self.assertIn(name, replies[0])

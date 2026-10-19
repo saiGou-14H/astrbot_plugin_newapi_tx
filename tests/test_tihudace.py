@@ -373,6 +373,44 @@ class SchedulerTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('SECRET-sentinel', str(log.mock_calls) + text)
         log.info.assert_not_called()
 
+    async def test_storage_diagnostics_are_allowlisted_and_full_has_actionable_fallback(self):
+        from compat_plugin.image_storage import ImageStorageError, SAFE_ERROR_CODES
+        private = 'SECRET-token-url-resource-sentinel'
+        cases = [(ImageStorageError(code), code) for code in SAFE_ERROR_CODES]
+        cases += [(ImageStorageError(private), 'upload_failed'),
+                  (ImageStorageError(['storage_full', private]), 'upload_failed'),
+                  (RuntimeError(private), 'upload_failed')]
+        self.plugin.config['image_storage_settings'] = {'enabled': True}
+        for error, expected in cases:
+            with self.subTest(expected=expected):
+                # Exception messages and attached fields must never reach logs/payloads.
+                error.args = (private,)
+                error.resource = private
+                post = AsyncMock(return_value=SimpleNamespace(
+                    status_code=200, json=lambda: {'errcode': 0}))
+                with patch('compat_plugin.image_storage.upload_tihudace_png',
+                           new_callable=AsyncMock, side_effect=error) as upload, patch(
+                        'httpx.AsyncClient') as factory, patch('compat_plugin.main.logger') as log:
+                    factory.return_value.__aenter__.return_value.post = post
+                    sent = await TihudaceScheduler(self.plugin, self.context)._send_dingtalk(
+                        self.plugin.config['tihudace_settings']['dingtalk_webhook'],
+                        'test', '/tmp/x.png')
+                self.assertFalse(sent)
+                upload.assert_awaited_once()
+                post.assert_awaited_once()
+                log.info.assert_not_called()
+                text = post.call_args.kwargs['json']['markdown']['text']
+                output = str(log.mock_calls)
+                self.assertIn('code=' + expected, output)
+                self.assertNotIn(private, output + text)
+                self.assertNotIn('![', text)
+                self.assertIn('本次仅发送文字摘要', text)
+                if expected == 'storage_full':
+                    self.assertIn('存储空间不足', text)
+                    self.assertIn('清理或扩容', text)
+                else:
+                    self.assertNotIn('存储空间不足', text)
+
     async def test_disabled_storage_sends_text_without_upload(self):
         post = AsyncMock(return_value=SimpleNamespace(status_code=200, json=lambda: {'errcode': 0}))
         with patch('compat_plugin.image_storage.upload_tihudace_png', new_callable=AsyncMock) as upload, patch(

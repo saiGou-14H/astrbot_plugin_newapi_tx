@@ -207,6 +207,39 @@ class StorageTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(clear.call_count, 1)
         self.client_factory.assert_not_called()
 
+    async def test_real_s3_storage_full_and_unknown_codes_are_sanitized(self):
+        from minio.error import S3Error
+        for sdk_code, expected in [('XMinioStorageFull', 'storage_full'),
+                                   ('AccessDenied', 'upload_failed'),
+                                   (SECRET, 'upload_failed')]:
+            with self.subTest(expected=expected):
+                self.put.reset_mock()
+                self.put.side_effect = S3Error(
+                    code=sdk_code, message=SECRET + ACCESS,
+                    resource='https://private.test/?token=' + SECRET,
+                    request_id='REMOTE_PRIVATE_SENTINEL', host_id=SECRET,
+                    response=urllib3.response.HTTPResponse(status=507))
+                with patch.object(urllib3.PoolManager, 'clear') as clear:
+                    await self.assert_code(expected)
+                self.put.assert_called_once()
+                self.assertGreaterEqual(clear.call_count, 1)
+                self.client_factory.assert_not_called()
+
+    async def test_non_s3_error_cannot_spoof_storage_full(self):
+        error = RuntimeError('XMinioStorageFull ' + SECRET)
+        error.code = 'XMinioStorageFull'
+        self.put.side_effect = error
+        await self.assert_code('upload_failed')
+        self.put.assert_called_once()
+        self.client_factory.assert_not_called()
+
+    def test_safe_error_code_rejects_unknown_and_non_string_values(self):
+        for code in storage.SAFE_ERROR_CODES:
+            self.assertEqual(storage.safe_error_code(storage.ImageStorageError(code)), code)
+        for error in (RuntimeError(SECRET), storage.ImageStorageError(SECRET),
+                      storage.ImageStorageError(['storage_full'])):
+            self.assertEqual(storage.safe_error_code(error), 'upload_failed')
+
     async def test_sdk_constructor_failure_is_sanitized(self):
         with patch.object(minio, 'Minio', side_effect=ValueError(SECRET)):
             await self.assert_code('upload_failed')

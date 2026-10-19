@@ -25,10 +25,26 @@ PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 MAX_PNG_BYTES = 5 * 1024 * 1024
 
 
+SAFE_ERROR_CODES = frozenset({
+    'disabled', 'invalid_configuration', 'dependency_missing', 'png_unreadable',
+    'png_too_large', 'invalid_png', 'upload_failed', 'storage_full',
+    'public_image_unavailable', 'public_image_size_mismatch',
+})
+
+
 class ImageStorageError(RuntimeError):
     def __init__(self, code):
         self.code = code
         super().__init__(code)
+
+
+def safe_error_code(error):
+    """Return only owned diagnostic codes; never render SDK messages or URLs."""
+    if isinstance(error, ImageStorageError):
+        code = error.code
+        if type(code) is str and code in SAFE_ERROR_CODES:
+            return code
+    return 'upload_failed'
 
 
 def _root_url(value, schemes):
@@ -145,6 +161,7 @@ def _read_png(path):
 def _put_png(settings, object_name, data):
     try:
         from minio import Minio
+        from minio.error import S3Error
         import urllib3
     except ImportError:
         raise ImageStorageError('dependency_missing') from None
@@ -155,6 +172,11 @@ def _put_png(settings, object_name, data):
         client = Minio(endpoint.netloc, access_key=access_key, secret_key=secret_key,
                        secure=endpoint.scheme == 'https', region='us-east-1', http_client=pool)
         client.put_object(bucket, object_name, BytesIO(data), len(data), content_type='image/png')
+    except S3Error as error:
+        # Map only the known MinIO code (normally HTTP 507), never response
+        # messages, request IDs, resource names or arbitrary exception strings.
+        code = 'storage_full' if error.code == 'XMinioStorageFull' else 'upload_failed'
+        raise ImageStorageError(code) from None
     except Exception:
         # SDK exceptions may contain credentials, server responses or URLs.
         raise ImageStorageError('upload_failed') from None
@@ -206,7 +228,7 @@ async def upload_tihudace_png(path, config) -> str:
     """Return an anonymously verified PNG URL, or raise ImageStorageError(code).
 
     Codes: disabled, invalid_configuration, dependency_missing, png_unreadable,
-    png_too_large, invalid_png, upload_failed, public_image_unavailable,
+    png_too_large, invalid_png, upload_failed, storage_full, public_image_unavailable,
     public_image_size_mismatch. Cancellation propagates normally.
     """
     settings = _settings(config)
