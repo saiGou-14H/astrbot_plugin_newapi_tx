@@ -26,6 +26,15 @@ from .qq_push_targets import (
 from .tihudace_targets import TargetIssue, parse_target_specs
 from .tihudace_batch import first_failure_status, run_targets, successful
 
+# 醍醐测智：单站点瞬时故障在同一轮内重试的配置。
+# 上游中转站的渠道池偶尔瞬时空池（直接回 502「no available accounts」），
+# 隔几秒重试通常就能拿到可用账号，避免整轮定时推送白跑一趟。
+TIHUDACE_RETRY_ATTEMPTS = 2
+TIHUDACE_RETRY_DELAY_SECONDS = 6.0
+TIHUDACE_RETRYABLE_CODES = frozenset({
+    'HTTP_ERROR', 'TIMEOUT', 'NETWORK_ERROR', 'EMPTY_RESPONSE', 'INVALID_RESPONSE',
+})
+
 def load_plugin_version() -> str:
     """
     从插件根目录的 metadata.yaml 读取 version 字段，
@@ -912,12 +921,35 @@ class NewApiSuitePlugin(Star):
         return await self._tihudace_render(content)
 
     async def _tihudace_generate_one(self, target, prompt: str) -> Tuple[str, str]:
-        """对单个站点执行「请求模型 → 渲染图片」。"""
-        try:
-            content = await self.core.codex_chat_completion(prompt, target=target)
-        except CodexGenerationError as e:
-            return ('MODEL_TIMEOUT' if e.code == 'TIMEOUT' else 'MODEL_FAILED'), ''
-        return await self._tihudace_render(content)
+        """对单个站点执行「请求模型 → 渲染图片」，瞬时故障在同一轮内重试一次。
+
+        重试只针对瞬时故障（上游 5xx、超时、网络错误、空回复）；缺 key、地址非法
+        这类配置错误重试无意义，直接返回失败，不浪费本轮的时间窗口。
+        """
+        status, png = 'MODEL_FAILED', ''
+        for attempt in range(1, TIHUDACE_RETRY_ATTEMPTS + 1):
+            try:
+                content = await self.core.codex_chat_completion(prompt, target=target)
+            except CodexGenerationError as e:
+                status = 'MODEL_TIMEOUT' if e.code == 'TIMEOUT' else 'MODEL_FAILED'
+                if e.code not in TIHUDACE_RETRYABLE_CODES or attempt >= TIHUDACE_RETRY_ATTEMPTS:
+                    return status, ''
+                logger.warning(
+                    f"[醍醐测智] 站点瞬时失败 code={e.code}"
+                    f" http_status={e.http_status}，{TIHUDACE_RETRY_DELAY_SECONDS:g}s 后重试"
+                    f"（第 {attempt + 1}/{TIHUDACE_RETRY_ATTEMPTS} 次）：{target.label}"
+                )
+                await asyncio.sleep(TIHUDACE_RETRY_DELAY_SECONDS)
+                continue
+            status, png = await self._tihudace_render(content)
+            if status != 'MODEL_FAILED' or attempt >= TIHUDACE_RETRY_ATTEMPTS:
+                return status, png
+            logger.warning(
+                f"[醍醐测智] 站点返回空结果，{TIHUDACE_RETRY_DELAY_SECONDS:g}s 后重试"
+                f"（第 {attempt + 1}/{TIHUDACE_RETRY_ATTEMPTS} 次）：{target.label}"
+            )
+            await asyncio.sleep(TIHUDACE_RETRY_DELAY_SECONDS)
+        return status, png
 
     async def _tihudace_render(self, content) -> Tuple[str, str]:
         """把模型回复渲染成 PNG；返回 (状态码, png路径)。"""

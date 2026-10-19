@@ -4,6 +4,20 @@
 
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/)。
 
+## [1.0.52] - 2026-10-19
+
+### 修复
+- 醍醐测智单站点生成增加「瞬时故障重试」：上游中转站偶尔瞬时空池（直接回 502
+  `no available accounts` / 504 后无可用账号）时，原实现会整轮失败、定时推送不发图。
+  现在对 `HTTP_ERROR`/`TIMEOUT`/`NETWORK_ERROR`/`EMPTY_RESPONSE`/`INVALID_RESPONSE`
+  在同一轮内重试一次（默认间隔 6 秒）；缺 key、地址非法等配置错误不重试，
+  避免无意义等待。批量场景下各站点仍互相独立、顺序不变。
+
+### 测试
+- 新增 3 项：瞬时 502 后重试成功出图、配置错误不重试、连续超时仍报 `MODEL_TIMEOUT`
+  且确实重试过；集成测试加入自动 fixture 把重试延迟归零。
+- 全套 301 项通过、4 项 MySQL 用例按需跳过。
+
 ## [1.0.51] - 2026-10-19
 
 ### 新增

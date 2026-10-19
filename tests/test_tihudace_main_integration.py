@@ -39,6 +39,8 @@ def build_plugin(config, *, token='sk-shared', contents=None):
     async def fake_completion(prompt, target=None):
         state['calls'].append((target.model if target else None, prompt))
         value = state['contents'].get(target.model if target else 'default')
+        if isinstance(value, list):  # 序列值用于模拟「先失败、重试成功」
+            value = value.pop(0) if len(value) > 1 else value[0]
         if isinstance(value, Exception):
             raise value
         return value
@@ -52,6 +54,13 @@ def build_plugin(config, *, token='sk-shared', contents=None):
     plugin._render_html_to_png = fake_render_html_to_png
     plugin._state = state
     return plugin
+
+
+@pytest.fixture(autouse=True)
+def _no_retry_delay(monkeypatch):
+    """重试逻辑在单测里不需要真的等，延迟归零。"""
+    monkeypatch.setattr(plugin_main, 'TIHUDACE_RETRY_DELAY_SECONDS', 0)
+    return None
 
 
 def patch_data_dir(plugin, tmp_path):
@@ -125,8 +134,11 @@ def test_batch_generation_is_isolated_per_site(tmp_path):
         ('model-a', 'OK'), ('model-b', 'MODEL_TIMEOUT'), ('model-c', 'HTML_MISSING')]
     assert outcomes[0].png and os.path.exists(outcomes[0].png)
     assert outcomes[1].png == '' and outcomes[2].png == ''
-    # 每个站点都收到了同一提示词，且用的是各自的模型
-    assert [call[0] for call in plugin._state['calls']] == ['model-a', 'model-b', 'model-c']
+    # 每个站点都收到了同一提示词，且用的是各自的模型；
+    # 超时站点会按瞬时故障重试一次，因此 model-b 出现两次
+    assert {call[0] for call in plugin._state['calls']} == {'model-a', 'model-b', 'model-c'}
+    assert {call[1] for call in plugin._state['calls']} == {'画一个 SVG'}
+    assert [call[0] for call in plugin._state['calls']].count('model-b') == 2
 
 
 def test_batch_report_lists_every_site_and_counts(tmp_path):
@@ -212,3 +224,52 @@ async def _fake_render(html, png_path):
     with open(png_path, 'w', encoding='utf-8') as handle:
         handle.write(html)
     return png_path
+
+
+def test_transient_failure_is_retried_and_can_still_succeed(tmp_path):
+    """上游瞬时空池（502）后重试一次仍可能出图，不该整轮白跑。"""
+    from astrbot_plugin_newapi_tx.newapi_utils import CodexGenerationError
+
+    plugin = build_plugin(
+        {'codex_settings': {'prompt_template': 'p', 'targets': ['https://a.example.com|sk-a|model-a']}},
+        contents={'model-a': [CodexGenerationError('HTTP_ERROR', 502), '```html\n<svg><rect/></svg>\n```']},
+    )
+    patch_data_dir(plugin, tmp_path)
+    targets, _ = plugin._tihudace_targets()
+
+    outcomes, _ = asyncio.run(plugin._generate_tihudace_batch(targets))
+    assert [o.status for o in outcomes] == ['OK']
+    assert len(plugin._state['calls']) == 2
+    assert outcomes[0].png and os.path.exists(outcomes[0].png)
+
+
+def test_configuration_error_is_not_retried(tmp_path):
+    """缺 key / 地址非法重试也没用，只请求一次就报失败。"""
+    from astrbot_plugin_newapi_tx.newapi_utils import CodexGenerationError
+
+    plugin = build_plugin(
+        {'codex_settings': {'prompt_template': 'p', 'targets': ['https://a.example.com|sk-a|model-a']}},
+        contents={'model-a': CodexGenerationError('CONFIGURATION_ERROR')},
+    )
+    patch_data_dir(plugin, tmp_path)
+    targets, _ = plugin._tihudace_targets()
+
+    outcomes, _ = asyncio.run(plugin._generate_tihudace_batch(targets))
+    assert [o.status for o in outcomes] == ['MODEL_FAILED']
+    assert len(plugin._state['calls']) == 1
+
+
+def test_timeout_keeps_model_timeout_status_after_retries(tmp_path):
+    """连续超时最终仍报 MODEL_TIMEOUT，且确实重试过。"""
+    from astrbot_plugin_newapi_tx.newapi_utils import CodexGenerationError
+
+    plugin = build_plugin(
+        {'codex_settings': {'prompt_template': 'p', 'targets': ['https://a.example.com|sk-a|model-a']}},
+        contents={'model-a': [CodexGenerationError('TIMEOUT'), CodexGenerationError('TIMEOUT')]},
+    )
+    patch_data_dir(plugin, tmp_path)
+    targets, _ = plugin._tihudace_targets()
+
+    outcomes, _ = asyncio.run(plugin._generate_tihudace_batch(targets))
+    assert [o.status for o in outcomes] == ['MODEL_TIMEOUT']
+    assert len(plugin._state['calls']) == 2
