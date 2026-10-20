@@ -307,7 +307,8 @@ class TihudaceScheduler:
             webhook = str(conf.get('dingtalk_webhook') or '')
             if len(images) == 1:
                 # 单图沿用历史入口，保持摘要与正文格式不变。
-                sent = bool(webhook) and await self._send_dingtalk(webhook, summary, images[0][1])
+                sent = bool(webhook) and await self._send_dingtalk(
+                    webhook, summary, images[0][1], model=images[0][0])
             else:
                 sent = bool(webhook) and await self._send_dingtalk_many(webhook, summary, images)
             if sent:
@@ -339,9 +340,10 @@ class TihudaceScheduler:
             logger.error(f"[醍醐测智] QQ群推送异常 target={index}: {type(e).__name__}")
             return False
 
-    async def _send_dingtalk(self, webhook: str, summary: str, png: str) -> bool:
-        """单图推送（历史入口）。"""
-        return await self._send_dingtalk_many(webhook, summary, [(codex_model_name(self.plugin.config), png)])
+    async def _send_dingtalk(self, webhook: str, summary: str, png: str, *, model=None) -> bool:
+        """单图推送；实际生成模型优先，旧调用未传模型时才回退默认配置。"""
+        actual_model = codex_model_name(self.plugin.config) if model is None else model
+        return await self._send_dingtalk_many(webhook, summary, [(actual_model, png)])
 
     async def _send_dingtalk_many(self, webhook: str, summary: str, images) -> bool:
         """推送一张或多张图片；多站点时逐张上传并写入同一 markdown。"""

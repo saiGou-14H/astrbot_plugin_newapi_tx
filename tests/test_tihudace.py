@@ -227,6 +227,23 @@ class SchedulerTests(unittest.IsolatedAsyncioTestCase):
     async def _delete_job(self, job_id):
         self.jobs.pop(job_id, None)
 
+    async def test_dingtalk_single_batch_image_uses_actual_model(self):
+        self.plugin.config['codex_settings']['model'] = 'gpt-6-astra'
+        sched = TihudaceScheduler(self.plugin, self.context)
+        sched._send_qq_group = AsyncMock(return_value=True)
+        post = AsyncMock(return_value=SimpleNamespace(
+            status_code=200, json=lambda: {'errcode': 0}))
+        # Also covers the successful subset of a batch: only one image remains.
+        with patch('httpx.AsyncClient') as factory:
+            factory.return_value.__aenter__.return_value.post = post
+            status = await sched._push_images([
+                ('deepseek-v4.1-flash', '/tmp/x.png', 'actual-site')])
+        self.assertEqual(status, 'OK')
+        markdown = post.await_args.kwargs['json']['markdown']
+        self.assertIn('deepseek-v4.1-flash', markdown['title'])
+        self.assertIn('- 模型：deepseek-v4.1-flash（SVG 动画 HTML）', markdown['text'])
+        self.assertNotIn('gpt-6-astra', markdown['text'])
+
     async def test_interval_to_cron(self):
         self.assertEqual(TihudaceScheduler._interval_to_cron(15), "*/15 * * * *")
         self.assertEqual(TihudaceScheduler._interval_to_cron(360), "0 */6 * * *")
